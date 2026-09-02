@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import Foundation
 
@@ -7,9 +8,11 @@ import Foundation
 // sound when the click actually happens.
 //
 // Subcommands:
-//   show [--ttl SECONDS] [--sound SPEC] [--volume 0..1] [--log FILE] [--state-dir DIR] --marker X,Y,LABEL,KIND ...
+//   show [--ttl SECONDS] [--sound SPEC] [--key-sound SPEC] [--scroll-sound SPEC] [--volume 0..1]
+//        [--log FILE] [--state-dir DIR] [--banner TEXT ...] [--marker X,Y,LABEL,KIND ...]
 //        X,Y are logical points with a top-left origin (CGWindowList convention).
 //        KIND is one of: click, scroll, move, drag-start, drag-end.
+//        A banner line is shown at the top of the screen, used for upcoming keyboard input.
 //        Exits after TTL seconds or on SIGTERM/SIGINT (fades out first).
 //   sounds            Lists the sound presets, system sounds, melodies, and modes.
 //   play SPEC [--volume 0..1]
@@ -32,8 +35,11 @@ struct Marker {
 
 struct ShowOptions {
     var markers: [Marker] = []
+    var banner: [String] = []
     var ttl: Double = 2.0
     var sound = "tick"
+    var keySound = "keyboard"
+    var scrollSound = "none"
     var volume: Float = 0.6
     var logPath: String?
     var stateDirectory: String?
@@ -73,6 +79,12 @@ func parseShowOptions(_ args: [String]) -> ShowOptions {
             options.ttl = ttl
         case "--sound":
             options.sound = value(for: "--sound")
+        case "--key-sound":
+            options.keySound = value(for: "--key-sound")
+        case "--scroll-sound":
+            options.scrollSound = value(for: "--scroll-sound")
+        case "--banner":
+            options.banner.append(value(for: "--banner"))
         case "--volume":
             guard let volume = Float(value(for: "--volume")) else { fail("--volume needs a number") }
             options.volume = volume
@@ -93,7 +105,7 @@ func parseShowOptions(_ args: [String]) -> ShowOptions {
             fail("unknown argument: \(args[index])")
         }
     }
-    if options.markers.isEmpty { fail("at least one --marker is required") }
+    if options.markers.isEmpty && options.banner.isEmpty { fail("at least one --marker or --banner is required") }
     return options
 }
 
@@ -101,15 +113,60 @@ func parseShowOptions(_ args: [String]) -> ShowOptions {
 
 final class MarkerView: NSView {
     let markers: [Marker]
+    let banner: [String]
     let screenHeight: CGFloat
     var phase: CGFloat = 0
     var alphaScale: CGFloat = 1
     var pressedAt: [Int: Date] = [:]
+    var keyFlashAt: Date?
+    var keystrokes = 0
 
-    init(frame: NSRect, markers: [Marker], screenHeight: CGFloat) {
+    init(frame: NSRect, markers: [Marker], banner: [String], screenHeight: CGFloat) {
         self.markers = markers
+        self.banner = banner
         self.screenHeight = screenHeight
         super.init(frame: frame)
+    }
+
+    /// Marks the nearest marker of the given kind as pressed, used for scroll feedback.
+    func press(kind: String) {
+        var chosen: Int?
+        for (index, marker) in markers.enumerated() where marker.kind == kind {
+            if chosen == nil || (pressedAt[index] == nil && pressedAt[chosen!] != nil) { chosen = index }
+        }
+        if let index = chosen { pressedAt[index] = Date() }
+    }
+
+    func drawBanner() {
+        guard !banner.isEmpty else { return }
+        let flash: CGFloat = {
+            guard let at = keyFlashAt else { return 0 }
+            return CGFloat(max(0, 1 - Date().timeIntervalSince(at) / 0.18))
+        }()
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+            .foregroundColor: NSColor.white.withAlphaComponent(alphaScale),
+        ]
+        let lines = banner.map { ("\u{2328}  " + $0) as NSString }
+        let sizes = lines.map { $0.size(withAttributes: attributes) }
+        let width = min(bounds.width - 80, (sizes.map { $0.width }.max() ?? 0) + 28)
+        let lineHeight = (sizes.first?.height ?? 17) + 4
+        let height = lineHeight * CGFloat(lines.count) + 16
+        let box = NSRect(x: (bounds.width - width) / 2, y: bounds.height - 40 - height, width: width, height: height)
+        let path = NSBezierPath(roundedRect: box, xRadius: 10, yRadius: 10)
+        NSColor(calibratedWhite: 0.08, alpha: 0.88 * alphaScale).setFill()
+        path.fill()
+        path.lineWidth = 2 + 2 * flash
+        NSColor.systemRed.withAlphaComponent(alphaScale * (0.55 + 0.45 * flash)).setStroke()
+        path.stroke()
+        for (index, line) in lines.enumerated() {
+            let y = box.maxY - 10 - lineHeight * CGFloat(index + 1) + 4
+            let clip = NSRect(x: box.minX + 14, y: y, width: width - 28, height: lineHeight)
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(rect: clip).addClip()
+            line.draw(at: NSPoint(x: clip.minX, y: y), withAttributes: attributes)
+            NSGraphicsContext.restoreGraphicsState()
+        }
     }
 
     required init?(coder: NSCoder) { nil }
@@ -142,6 +199,7 @@ final class MarkerView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        drawBanner()
         var dragStart: NSPoint?
         for (index, marker) in markers.enumerated() {
             let center = point(marker)
@@ -224,11 +282,14 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
     let options: ShowOptions
     var window: NSWindow!
     var view: MarkerView!
-    var player: SoundPlayer!
+    var clickPlayer: SoundPlayer!
+    var keyPlayer: SoundPlayer!
+    var scrollPlayer: SoundPlayer!
     var startedAt = Date()
     var fadingOut = false
     var signalSources: [DispatchSourceSignal] = []
-    var clickMonitor: Any?
+    var monitors: [Any] = []
+    var lastScrollSound = Date.distantPast
     let dateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -261,30 +322,50 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
         window.isReleasedWhenClosed = false
         window.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        view = MarkerView(frame: NSRect(origin: .zero, size: screen.frame.size), markers: options.markers, screenHeight: screen.frame.height)
+        view = MarkerView(frame: NSRect(origin: .zero, size: screen.frame.size), markers: options.markers, banner: options.banner, screenHeight: screen.frame.height)
         window.contentView = view
         window.orderFrontRegardless()
 
-        player = SoundPlayer(spec: options.sound, volume: options.volume, stateDirectory: options.stateDirectory)
-        if let problem = player.problem { log("sound problem: \(problem), staying silent") }
-        log("shown markers=\(options.markers.count) sound=\(player.isSilent ? "none" : options.sound)")
+        clickPlayer = SoundPlayer(spec: options.sound, volume: options.volume, stateDirectory: options.stateDirectory)
+        keyPlayer = SoundPlayer(spec: options.keySound, volume: options.volume, stateDirectory: options.stateDirectory)
+        scrollPlayer = SoundPlayer(spec: options.scrollSound, volume: options.volume, stateDirectory: options.stateDirectory)
+        for (label, player) in [("click", clickPlayer!), ("key", keyPlayer!), ("scroll", scrollPlayer!)] {
+            if let problem = player.problem { log("\(label) sound problem: \(problem), staying silent") }
+        }
+        log("shown markers=\(options.markers.count) banner=\(options.banner.count) sound=\(options.sound) key=\(options.keySound) scroll=\(options.scrollSound) accessibilityTrusted=\(AXIsProcessTrusted())")
 
-        // Synthetic clicks posted by computer use reach global monitors like real ones, so this
-        // fires at the moment each click lands, which is when the sound and the press animation belong.
-        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [self] event in
+        // Synthetic events posted by computer use reach global monitors like real ones, so these
+        // fire at the moment each click, keystroke, or scroll tick lands.
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown], handler: { [self] event in
             let location = NSEvent.mouseLocation
             view.press(at: location)
-            let played = player.play()
+            let played = clickPlayer.play()
             log("mouse-down type=\(event.type.rawValue) at=(\(Int(location.x)),\(Int(screen.frame.height - location.y))) sound=\(played)")
-        }
-        if clickMonitor == nil { log("global mouse monitor unavailable") }
+        }) { monitors.append(monitor) } else { log("global mouse monitor unavailable") }
+
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown], handler: { [self] event in
+            view.keystrokes += 1
+            view.keyFlashAt = Date()
+            let played = keyPlayer.play()
+            log("key-down keyCode=\(event.keyCode) count=\(view.keystrokes) sound=\(played)")
+        }) { monitors.append(monitor) } else { log("global key monitor unavailable") }
+
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel], handler: { [self] event in
+            view.press(kind: "scroll")
+            var played = "throttled"
+            if Date().timeIntervalSince(lastScrollSound) > 0.12 {
+                lastScrollSound = Date()
+                played = scrollPlayer.play()
+            }
+            log("scroll dy=\(Int(event.scrollingDeltaY)) dx=\(Int(event.scrollingDeltaX)) sound=\(played)")
+        }) { monitors.append(monitor) } else { log("global scroll monitor unavailable") }
 
         Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [self] _ in
             let elapsed = Date().timeIntervalSince(startedAt)
             view.phase = CGFloat(elapsed.truncatingRemainder(dividingBy: 1.0))
             if fadingOut || elapsed > options.ttl - 0.3 {
                 view.alphaScale = max(0, view.alphaScale - 0.12)
-                if view.alphaScale <= 0 && !player.isPlaying { finish() }
+                if view.alphaScale <= 0 && !clickPlayer.isPlaying && !keyPlayer.isPlaying && !scrollPlayer.isPlaying { finish() }
             }
             view.needsDisplay = true
         }
@@ -299,8 +380,8 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
     }
 
     func finish() {
-        if let monitor = clickMonitor { NSEvent.removeMonitor(monitor) }
-        log("exit")
+        for monitor in monitors { NSEvent.removeMonitor(monitor) }
+        log("exit keystrokes=\(view.keystrokes)")
         NSApp.terminate(nil)
     }
 }

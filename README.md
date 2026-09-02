@@ -23,12 +23,14 @@ It is implemented entirely with Claude Code hooks, so:
 
 ## How it works
 
-1. A `PreToolUse` hook matches the computer-use click, scroll, drag, and batch tools. It reads
-   the coordinates from the tool input, converts them from screenshot pixels to screen points,
-   launches the overlay, waits for the preview delay, and exits so the action proceeds.
-2. The overlay watches for mouse-down events with a global monitor. Synthetic clicks posted by
-   computer use reach it like real ones, so the sound and the press animation fire at the exact
-   moment each click lands, one per click even inside a batch.
+1. A `PreToolUse` hook matches the computer-use click, scroll, drag, type, key, and batch
+   tools. It reads coordinates and text from the tool input, converts coordinates from
+   screenshot pixels to screen points, launches the overlay with markers and a banner, waits
+   for the preview delay, and exits so the action proceeds.
+2. The overlay watches for mouse-down, key-down, and scroll events with global monitors.
+   Synthetic events posted by computer use reach them like real ones, so sounds and animations
+   fire at the exact moment each click, keystroke, or scroll lands, one per event even inside a
+   batch. Key events need the Accessibility permission you already granted for computer use.
 3. A `PostToolUse` hook dismisses the overlay and compares the real cursor position with the
    requested coordinate to confirm the coordinate mapping.
 
@@ -74,8 +76,10 @@ Environment variables read by the hook:
 | :-- | :-- | :-- |
 | `CLICK_OVERLAY_PREVIEW_MS` | `600` | How long the marker is shown before the action runs |
 | `CLICK_OVERLAY_LINGER_MS` | `350` | How long the marker stays after the action finishes |
-| `CLICK_OVERLAY_MAX_TTL_S` | `30` | Safety limit for an overlay that is never dismissed |
-| `CLICK_OVERLAY_SOUND` | `tick` | Click sound: `tick`, `none`, a macOS system sound, or an audio file path |
+| `CLICK_OVERLAY_MAX_TTL_S` | `120` | Safety limit for an overlay that is never dismissed |
+| `CLICK_OVERLAY_SOUND` | `tick` | Click sound, see [Sounds](#sounds) |
+| `CLICK_OVERLAY_KEY_SOUND` | `keyboard` | Sound per keystroke while Claude types |
+| `CLICK_OVERLAY_SCROLL_SOUND` | `none` | Sound per scroll gesture |
 | `CLICK_OVERLAY_VOLUME` | `0.6` | Sound volume from `0` to `1` |
 | `CLICK_OVERLAY_BIN` | `overlay/build/click-overlay` | Overlay binary location |
 | `CLICK_OVERLAY_STATE_DIR` | `~/.cache/claude-click-overlay` | Log, pid, and calibration files |
@@ -122,13 +126,22 @@ overlay/build/click-overlay use --clear            # back to the default tick
 | `say:nice` | speaks the text with the system voice |
 | `none` | silent |
 
+Clicks, keystrokes, and scrolling each have their own sound. Defaults: `tick` for clicks,
+`keyboard` for keystrokes, `none` for scrolling.
+
+```sh
+overlay/build/click-overlay use coin --key typewriter --scroll bubble
+overlay/build/click-overlay use --key none          # keep clicks, silence typing
+```
+
 Melodies remember their position between actions, so a long batch of clicks plays the tune
 straight through and the next call continues where it stopped. The tunes are public-domain
 melodies rendered as chiptune notes. Meme sounds from the internet are usually copyrighted, which
 is why none ship here; point `use` at a file you have the rights to instead.
 
-`CLICK_OVERLAY_SOUND` and `CLICK_OVERLAY_VOLUME` in the environment still work as defaults; the
-config file wins when both are set.
+`CLICK_OVERLAY_SOUND`, `CLICK_OVERLAY_KEY_SOUND`, `CLICK_OVERLAY_SCROLL_SOUND`, and
+`CLICK_OVERLAY_VOLUME` in the environment still work as defaults; the config file wins when both
+are set.
 
 ## Markers
 
@@ -137,7 +150,11 @@ config file wins when both are set.
 | left, right, middle, double, triple click | red ring with crosshair and the click type |
 | scroll | blue ring labelled `scroll` |
 | left_click_drag | orange start and end rings joined by a dashed line |
-| computer_batch | one marker per pointer action, numbered in execution order |
+| type, key, hold_key | a banner at the top of the screen showing the text or key about to be sent |
+| computer_batch | one marker or banner line per action, numbered in execution order |
+
+While Claude types, every keystroke flashes the banner border and plays the key sound. A scroll
+gesture plays the scroll sound and pulses its blue marker.
 
 Press `Esc` to abort computer use as usual. The overlay fades out on its own.
 

@@ -50,16 +50,34 @@ CASES = [
             {"action": "left_click_drag", "start_coordinate": [100, 100], "coordinate": [300, 400]},
             {"action": "mouse_move", "coordinate": [10, 10]},
         ]}},
-        ["554,619,1 left click,click", "735,478,2 scroll,scroll", "107,107,3 drag,drag-start", "321,429,3 drop,drag-end"],
+        ["554,619,1 left click,click", "735,478,3 scroll,scroll", "107,107,4 drag,drag-start", "321,429,4 drop,drag-end"],
+        ['2 typing "2+2"'],
     ),
     (
         {"tool_name": "mcp__computer-use__computer_batch", "tool_input": {"actions": [{"action": "screenshot"}, {"action": "zoom", "region": [0, 0, 10, 10]}]}},
         None,
     ),
+    (
+        {"tool_name": "mcp__computer-use__type", "tool_input": {"text": "computer use test\nsecond line"}},
+        [],
+        ['typing "computer use test\u23cesecond line"'],
+    ),
+    (
+        {"tool_name": "mcp__computer-use__computer_batch", "tool_input": {"actions": [
+            {"action": "left_click", "coordinate": [456, 629]},
+            {"action": "type", "text": "x" * 100},
+            {"action": "key", "text": "Return", "repeat": 2},
+            {"action": "hold_key", "text": "shift", "duration": 1.5},
+        ]}},
+        ["489,674,1 left click,click"],
+        ['2 typing "' + "x" * 69 + '\u2026" (100 chars)', "3 key Return x2", "4 hold shift for 1.5s"],
+    ),
 ]
 
 failed = False
-for payload, expected_markers in CASES:
+for case in CASES:
+    payload, expected_markers = case[0], case[1]
+    expected_banner = case[2] if len(case) > 2 else []
     launched.clear()
     hook.pre(payload)
     if expected_markers is None:
@@ -68,18 +86,21 @@ for payload, expected_markers in CASES:
     else:
         command = launched[0] if launched else []
         markers = [command[i + 1] for i, token in enumerate(command) if token == "--marker"]
+        banner = [command[i + 1] for i, token in enumerate(command) if token == "--banner"]
         options = dict(zip(command[2::2], command[3::2]))
-        ok = markers == expected_markers and options.get("--sound") == "Pop" and options.get("--volume") == "0.4" and "--log" in command and options.get("--state-dir") == STATE_DIR
-        print("%s %s -> %s sound=%s volume=%s" % ("ok  " if ok else "FAIL", hook.action_name(payload["tool_name"]), markers, options.get("--sound"), options.get("--volume")))
+        ok = (markers == expected_markers and banner == expected_banner and options.get("--sound") == "Pop"
+              and options.get("--key-sound") == "keyboard" and options.get("--scroll-sound") == "none"
+              and options.get("--volume") == "0.4" and "--log" in command and options.get("--state-dir") == STATE_DIR)
+        print("%s %s -> markers=%s banner=%s" % ("ok  " if ok else "FAIL", hook.action_name(payload["tool_name"]), markers, banner))
     failed |= not ok
 
 # The config file written by `click-overlay use` must win over the environment.
 with open(os.environ["CLICK_OVERLAY_CONFIG"], "w", encoding="utf-8") as handle:
-    json.dump({"sound": "melody:tetris", "volume": 0.5}, handle)
+    json.dump({"sound": "melody:tetris", "key_sound": "typewriter", "scroll_sound": "bubble", "volume": 0.5}, handle)
 launched.clear()
 hook.pre(CASES[0][0])
 options = dict(zip(launched[0][2::2], launched[0][3::2]))
-ok = options.get("--sound") == "melody:tetris" and options.get("--volume") == "0.5"
-print("%s config file overrides environment -> sound=%s volume=%s" % ("ok  " if ok else "FAIL", options.get("--sound"), options.get("--volume")))
+ok = options.get("--sound") == "melody:tetris" and options.get("--key-sound") == "typewriter" and options.get("--scroll-sound") == "bubble" and options.get("--volume") == "0.5"
+print("%s config file overrides environment -> sound=%s key=%s scroll=%s volume=%s" % ("ok  " if ok else "FAIL", options.get("--sound"), options.get("--key-sound"), options.get("--scroll-sound"), options.get("--volume")))
 failed |= not ok
 sys.exit(1 if failed else 0)

@@ -131,3 +131,23 @@ funny is a matter of taste that no measurement settles; `click-overlay play NAME
 Melody mode was checked live: a batch of ten Calculator clicks played Korobeiniki notes 1 to
 10, and a second batch continued with notes 11 to 13, because the position is persisted in the
 state directory between overlay processes.
+
+## 8. Typing, keys, and scrolling
+
+A `computer_batch` in a new TextEdit document: click into the page, type a 19-character
+sentence, press Return, type a 40-character sentence, then scroll down 5 ticks. The pre hook
+produced two markers (click and scroll) and three banner lines (two typing lines and the key),
+numbered 1 to 5 in execution order and shown together before the batch started.
+
+| Event source | Observed by the overlay | Sound |
+| :-- | :-- | :-- |
+| 1 left click | 1 mouse-down at the marker | tick |
+| 19 + 1 + 40 keystrokes | 60 key-down events | keyboard, 60 times |
+| 1 scroll gesture of 5 ticks | 1 scroll event with dy = -5 | bubble |
+
+The global key monitor only delivers events to a process trusted for Accessibility. The
+overlay is spawned by the hook inside the terminal session, so it inherits the terminal's
+Accessibility grant that computer use itself requires; the overlay logs
+`accessibilityTrusted=true` at startup so a missing grant is visible in the log. Keystrokes
+posted by computer use arrive with `keyCode=0`, which is why the banner counts keystrokes
+instead of decoding them.

@@ -29,7 +29,7 @@ LOG_MAX_BYTES = 1_000_000
 
 OVERLAY_BIN = os.environ.get("CLICK_OVERLAY_BIN") or os.path.join(REPO_DIR, "overlay", "build", "click-overlay")
 PREVIEW_SECONDS = float(os.environ.get("CLICK_OVERLAY_PREVIEW_MS", "600")) / 1000.0
-MAX_TTL_SECONDS = float(os.environ.get("CLICK_OVERLAY_MAX_TTL_S", "30"))
+MAX_TTL_SECONDS = float(os.environ.get("CLICK_OVERLAY_MAX_TTL_S", "120"))
 LINGER_SECONDS = float(os.environ.get("CLICK_OVERLAY_LINGER_MS", "350")) / 1000.0
 OVERLAY_LOG_FILE = os.path.join(STATE_DIR, "overlay.log")
 # Sound choice written by `click-overlay use NAME`. The config file wins over the environment so
@@ -47,13 +47,21 @@ def load_config():
 
 
 def sound_settings():
-    """Return (sound spec, volume string): config file, then environment, then defaults."""
+    """Return click, key, and scroll sound specs plus the volume: config file, then environment, then defaults."""
     config = load_config()
-    sound = str(config.get("sound") or os.environ.get("CLICK_OVERLAY_SOUND") or "tick").strip()
-    volume = config.get("volume")
-    if volume is None:
-        volume = os.environ.get("CLICK_OVERLAY_VOLUME") or "0.6"
-    return sound or "none", str(volume).strip() or "0.6"
+
+    def pick(config_key, env_key, default):
+        value = config.get(config_key)
+        if value is None or str(value).strip() == "":
+            value = os.environ.get(env_key) or default
+        return str(value).strip() or "none"
+
+    return {
+        "sound": pick("sound", "CLICK_OVERLAY_SOUND", "tick"),
+        "key_sound": pick("key_sound", "CLICK_OVERLAY_KEY_SOUND", "keyboard"),
+        "scroll_sound": pick("scroll_sound", "CLICK_OVERLAY_SCROLL_SOUND", "none"),
+        "volume": pick("volume", "CLICK_OVERLAY_VOLUME", "0.6"),
+    }
 
 # Claude Code downsamples the screenshot so that the image fits the model's vision budget:
 # no side above MAX_TARGET_PX and at most MAX_TARGET_TOKENS tiles of PX_PER_TOKEN pixels.
@@ -67,7 +75,9 @@ MAX_TARGET_TOKENS = 1568
 TOOL_PREFIX = "mcp__computer-use__"
 CLICK_ACTIONS = {"left_click", "right_click", "middle_click", "double_click", "triple_click"}
 POINTER_ACTIONS = CLICK_ACTIONS | {"scroll", "mouse_move", "left_click_drag"}
+KEYBOARD_ACTIONS = {"type", "key", "hold_key"}
 MAX_CALIBRATION_SAMPLES = 12
+BANNER_TEXT_LIMIT = 70
 
 
 def log(message):
@@ -159,41 +169,64 @@ def action_name(tool_name):
     return tool_name[len(TOOL_PREFIX):] if tool_name.startswith(TOOL_PREFIX) else tool_name
 
 
-def pointer_actions(tool_name, tool_input):
-    """Yield (action, coordinate, start_coordinate) for every pointer action in the call."""
+def actions_in(tool_name, tool_input):
+    """Yield every action of the call as a dict with an "action" key, in execution order."""
     name = action_name(tool_name)
     if name == "computer_batch":
         for action in tool_input.get("actions") or []:
-            kind = action.get("action")
-            if kind in POINTER_ACTIONS and action.get("coordinate"):
-                yield kind, action["coordinate"], action.get("start_coordinate")
-    elif name in POINTER_ACTIONS and tool_input.get("coordinate"):
-        yield name, tool_input["coordinate"], tool_input.get("start_coordinate")
+            if isinstance(action, dict) and action.get("action"):
+                yield action
+    else:
+        yield dict(tool_input, action=name)
 
 
-def marker_args(actions, screen, size):
-    markers = []
-    total_clicks = sum(1 for kind, _, _ in actions if kind != "mouse_move")
-    index = 0
-    for kind, coordinate, start in actions:
-        if kind == "mouse_move":
+def pointer_actions(tool_name, tool_input):
+    """Yield (action, coordinate, start_coordinate) for every pointer action in the call."""
+    for action in actions_in(tool_name, tool_input):
+        kind = action["action"]
+        if kind in POINTER_ACTIONS and action.get("coordinate"):
+            yield kind, action["coordinate"], action.get("start_coordinate")
+
+
+def describe_keyboard(action):
+    """One banner line for a type, key, or hold_key action."""
+    kind = action["action"]
+    text = str(action.get("text") or "")
+    if kind == "type":
+        shown = text.replace("\r\n", "\n").replace("\n", "\u23ce")
+        if len(shown) > BANNER_TEXT_LIMIT:
+            shown = shown[:BANNER_TEXT_LIMIT - 1] + "\u2026"
+            return 'typing "%s" (%d chars)' % (shown, len(text))
+        return 'typing "%s"' % shown
+    if kind == "hold_key":
+        return "hold %s for %ss" % (text, action.get("duration", "?"))
+    repeat = action.get("repeat") or 1
+    return "key %s" % text + (" x%d" % repeat if repeat > 1 else "")
+
+
+def overlay_args(tool_name, tool_input, screen, size):
+    """Build --marker and --banner arguments, numbering the visible actions in execution order."""
+    visible = [a for a in actions_in(tool_name, tool_input)
+               if (a["action"] in POINTER_ACTIONS and a["action"] != "mouse_move" and a.get("coordinate"))
+               or a["action"] in KEYBOARD_ACTIONS]
+    args = []
+    for index, action in enumerate(visible, start=1):
+        number = "%d " % index if len(visible) > 1 else ""
+        kind = action["action"]
+        if kind in KEYBOARD_ACTIONS:
+            args += ["--banner", number + describe_keyboard(action)]
             continue
-        index += 1
-        number = "%d " % index if total_clicks > 1 else ""
-        x, y = to_logical(coordinate[0], coordinate[1], screen, size)
+        x, y = to_logical(action["coordinate"][0], action["coordinate"][1], screen, size)
         if kind == "left_click_drag":
+            start = action.get("start_coordinate")
             if start:
                 sx, sy = to_logical(start[0], start[1], screen, size)
-                markers.append("%d,%d,%sdrag,drag-start" % (sx, sy, number))
-            markers.append("%d,%d,%sdrop,drag-end" % (x, y, number))
+                args += ["--marker", "%d,%d,%sdrag,drag-start" % (sx, sy, number)]
+            args += ["--marker", "%d,%d,%sdrop,drag-end" % (x, y, number)]
         elif kind == "scroll":
-            markers.append("%d,%d,%sscroll,scroll" % (x, y, number))
+            args += ["--marker", "%d,%d,%sscroll,scroll" % (x, y, number)]
         else:
-            label = kind.replace("_", " ")
-            markers.append("%d,%d,%s%s,click" % (x, y, number, label))
-    args = []
-    for marker in markers:
-        args += ["--marker", marker]
+            args += ["--marker", "%d,%d,%s%s,click" % (x, y, number, kind.replace("_", " "))]
     return args
 
 
@@ -216,21 +249,22 @@ def stop_overlay():
 def pre(payload):
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
-    actions = list(pointer_actions(tool_name, tool_input))
-    if not any(kind != "mouse_move" for kind, _, _ in actions):
-        return
     if not os.path.exists(OVERLAY_BIN):
         log("overlay binary missing at %s; run install.sh" % OVERLAY_BIN)
         return
     screen = run_overlay(["screen"])
     width, height, source = image_size(screen, load_calibration())
-    args = marker_args(actions, screen, (width, height))
+    args = overlay_args(tool_name, tool_input, screen, (width, height))
+    if not args:
+        return
     stop_overlay()
     if os.path.exists(OVERLAY_LOG_FILE) and os.path.getsize(OVERLAY_LOG_FILE) > LOG_MAX_BYTES:
         os.replace(OVERLAY_LOG_FILE, OVERLAY_LOG_FILE + ".1")
-    sound, volume = sound_settings()
+    settings = sound_settings()
+    sound = settings["sound"]
     process = subprocess.Popen(
-        [OVERLAY_BIN, "show", "--ttl", str(MAX_TTL_SECONDS), "--sound", sound, "--volume", volume, "--log", OVERLAY_LOG_FILE, "--state-dir", STATE_DIR] + args,
+        [OVERLAY_BIN, "show", "--ttl", str(MAX_TTL_SECONDS), "--sound", sound, "--key-sound", settings["key_sound"],
+         "--scroll-sound", settings["scroll_sound"], "--volume", settings["volume"], "--log", OVERLAY_LOG_FILE, "--state-dir", STATE_DIR] + args,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -239,7 +273,7 @@ def pre(payload):
     os.makedirs(STATE_DIR, exist_ok=True)
     with open(PID_FILE, "w", encoding="utf-8") as handle:
         handle.write(str(process.pid))
-    log("pre %s markers=%s image=%dx%d(%s) sound=%s pid=%d" % (action_name(tool_name), args[1::2], width, height, source, sound, process.pid))
+    log("pre %s overlay=%s image=%dx%d(%s) sound=%s/%s/%s pid=%d" % (action_name(tool_name), args[1::2], width, height, source, sound, settings["key_sound"], settings["scroll_sound"], process.pid))
     time.sleep(PREVIEW_SECONDS)
 
 

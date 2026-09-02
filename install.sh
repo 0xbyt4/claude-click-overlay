@@ -30,8 +30,8 @@ python3 "$REPO_DIR/tools/test_hook_args.py"
 
 HOOK="python3 \"$REPO_DIR/hooks/hook.py\""
 HOOK_JSON=$(printf '%s' "$HOOK" | sed 's/"/\\"/g')
-MATCHER_PRE='^mcp__computer-use__(left_click|right_click|middle_click|double_click|triple_click|left_click_drag|scroll|computer_batch)$'
-MATCHER_POST='^mcp__computer-use__(left_click|right_click|middle_click|double_click|triple_click|left_click_drag|scroll|mouse_move|computer_batch)$'
+MATCHER_PRE='^mcp__computer-use__(left_click|right_click|middle_click|double_click|triple_click|left_click_drag|scroll|type|key|hold_key|computer_batch)$'
+MATCHER_POST='^mcp__computer-use__(left_click|right_click|middle_click|double_click|triple_click|left_click_drag|scroll|mouse_move|type|key|hold_key|computer_batch)$'
 
 if [ "${1:-}" = "--user" ]; then
     python3 - "$HOME/.claude/settings.json" "$HOOK" "$MATCHER_PRE" "$MATCHER_POST" <<'PY'

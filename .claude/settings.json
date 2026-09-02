@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^mcp__computer-use__(left_click|right_click|middle_click|double_click|triple_click|left_click_drag|scroll|computer_batch)$",
+        "matcher": "^mcp__computer-use__(left_click|right_click|middle_click|double_click|triple_click|left_click_drag|scroll|type|key|hold_key|computer_batch)$",
         "hooks": [
           {
             "type": "command",
@@ -14,7 +14,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "^mcp__computer-use__(left_click|right_click|middle_click|double_click|triple_click|left_click_drag|scroll|mouse_move|computer_batch)$",
+        "matcher": "^mcp__computer-use__(left_click|right_click|middle_click|double_click|triple_click|left_click_drag|scroll|mouse_move|type|key|hold_key|computer_batch)$",
         "hooks": [
           {
             "type": "command",
