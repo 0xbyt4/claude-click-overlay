@@ -105,3 +105,29 @@ clicks, at the predicted positions. The overlay marks the nearest ring as presse
 configured sound, and the post hook dismisses it afterwards. A failed action (the batch
 stopped because the target window belonged to an app outside the allowlist) produced markers
 but no mouse-down, and the calibration guard correctly ignored the resulting cursor sample.
+
+## 7. Synthesized sounds
+
+All bundled sounds are generated in code, so their character can be checked objectively by
+rendering them to WAV (`click-overlay render NAME file.wav`) and measuring duration, peak,
+RMS level, and the dominant frequency in the first and last quarter (zero-crossing rate).
+
+| Preset | Duration | RMS | Pitch start | Pitch end | Intended character |
+| :-- | :-- | :-- | :-- | :-- | :-- |
+| tick | 0.045 s | 0.15 | 2134 Hz | 1778 Hz | short neutral click |
+| pew | 0.22 s | 0.18 | 1064 Hz | 209 Hz | descending laser |
+| jump | 0.18 s | 0.31 | 345 Hz | 878 Hz | rising jump |
+| boom | 0.85 s | 0.30 | 221 Hz | 28 Hz | bass drop |
+| fart | 0.45 s | 0.40 | 111 Hz | 151 Hz | low wobble |
+| airhorn | 0.75 s | 0.69 | 651 Hz | 685 Hz | loud sustained chord |
+| rimshot | 0.90 s | 0.17 | 80 Hz | 9038 Hz | two kicks then hiss |
+| trombone | 1.85 s | 0.41 | 221 Hz | 171 Hz | four falling notes |
+| coin | 0.42 s | 0.30 | 1272 Hz | 1567 Hz | two-tone chime |
+
+Every preset renders and plays without error, unknown names fail with a clear message, and
+peaks are normalized so the volume setting behaves the same across presets. Whether they are
+funny is a matter of taste that no measurement settles; `click-overlay play NAME` is the test.
+
+Melody mode was checked live: a batch of ten Calculator clicks played Korobeiniki notes 1 to
+10, and a second batch continued with notes 11 to 13, because the position is persisted in the
+state directory between overlay processes.

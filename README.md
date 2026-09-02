@@ -8,8 +8,9 @@ overlay that draws a pulsing ring, a crosshair, and a label at the exact spot ea
 land, roughly half a second before it happens. Batches of actions get numbered markers so you can
 see the whole plan at once.
 
-When a click lands, the overlay plays a short sound and the ring collapses with a ripple, so you
-hear and see the moment it happens. Pick the sound you like or turn it off.
+When a click lands, the overlay plays a sound and the ring collapses with a ripple, so you hear
+and see the moment it happens. Choose from two dozen synthesized sounds, a random mode, tunes
+that advance one note per click, spoken words, your own audio file, or silence.
 
 It is implemented entirely with Claude Code hooks, so:
 
@@ -93,18 +94,41 @@ Set them in the `env` block of your Claude Code settings or in the shell that st
 
 ## Sounds
 
-`tick` is a synthesized 45 ms click that ships with the tool. Every macOS system sound works
-too: Tink, Pop, Morse, Ping, Glass, Bottle, Frog, Funk, Hero, Purr, Sosumi, Submarine, Blow,
-and Basso. Names are case-insensitive. A path to an `.aiff`, `.wav`, `.caf`, or `.mp3` file
-uses your own sound, and `none` keeps the overlay silent.
-
-Preview them before choosing:
+Every bundled sound is synthesized in code when it plays, so the repository contains no audio
+files and nothing with a third-party license. Pick one with `click-overlay use`, which writes a
+small config file the hook reads on every action, so the change applies to the next click
+without restarting Claude Code:
 
 ```sh
-overlay/build/click-overlay sounds          # list the options
-overlay/build/click-overlay play tick
-overlay/build/click-overlay play Pop --volume 0.4
+overlay/build/click-overlay sounds                 # list everything
+overlay/build/click-overlay play fart              # preview one
+overlay/build/click-overlay use fart --volume 0.5  # make it the click sound
+overlay/build/click-overlay use --clear            # back to the default tick
 ```
+
+| Spec | What you hear |
+| :-- | :-- |
+| `tick` | short neutral click, the default |
+| `bubble`, `blip`, `beep`, `ding`, `woodblock` | soft UI-style clicks and a small bell |
+| `typewriter`, `keyboard`, `shutter` | typewriter key, mechanical switch, camera shutter |
+| `drum`, `rimshot` | kick drum, ba-dum-tss |
+| `pew`, `jump`, `coin`, `powerup`, `robot` | chiptune laser, jump, coin, rising arpeggio, beep-boop |
+| `boing`, `boom`, `airhorn`, `fart`, `trombone`, `quack` | spring, bass drop, air horn, the classic, sad trombone, duck |
+| `Tink`, `Pop`, `Morse`, ... | any macOS system sound, case-insensitive |
+| `~/Sounds/meme.wav` | your own `.aiff`, `.wav`, `.caf`, or `.mp3` file |
+| `random` | a different preset on every click |
+| `random:fart,boing,quack` | a random pick from your own list |
+| `melody:tetris` | one note of a tune per click: `scale`, `twinkle`, `ode`, `birthday`, `jingle`, `tetris`, `elise` |
+| `say:nice` | speaks the text with the system voice |
+| `none` | silent |
+
+Melodies remember their position between actions, so a long batch of clicks plays the tune
+straight through and the next call continues where it stopped. The tunes are public-domain
+melodies rendered as chiptune notes. Meme sounds from the internet are usually copyrighted, which
+is why none ship here; point `use` at a file you have the rights to instead.
+
+`CLICK_OVERLAY_SOUND` and `CLICK_OVERLAY_VOLUME` in the environment still work as defaults; the
+config file wins when both are set.
 
 ## Markers
 

@@ -7,15 +7,21 @@ import Foundation
 // sound when the click actually happens.
 //
 // Subcommands:
-//   show [--ttl SECONDS] [--sound NAME] [--volume 0..1] [--log FILE] --marker X,Y,LABEL,KIND ...
+//   show [--ttl SECONDS] [--sound SPEC] [--volume 0..1] [--log FILE] [--state-dir DIR] --marker X,Y,LABEL,KIND ...
 //        X,Y are logical points with a top-left origin (CGWindowList convention).
 //        KIND is one of: click, scroll, move, drag-start, drag-end.
 //        Exits after TTL seconds or on SIGTERM/SIGINT (fades out first).
-//   sounds            Lists the available sound names.
-//   play NAME [--volume 0..1]
-//                     Plays a sound once so you can preview it.
+//   sounds            Lists the sound presets, system sounds, melodies, and modes.
+//   play SPEC [--volume 0..1]
+//                     Plays a sound spec once so you can preview it.
+//   render SPEC FILE  Writes a preset or melody to a WAV file.
+//   use SPEC [--volume 0..1] | use --clear
+//                     Saves the sound choice to the config file the hook reads on every action.
 //   cursor            Prints the current cursor position as JSON (logical points, top-left origin).
 //   screen            Prints the primary display geometry as JSON.
+//
+// A sound SPEC is "none", a preset name, a macOS system sound, a path to an audio file,
+// "random", "random:a,b,c", "melody:NAME", or "say:TEXT".
 
 struct Marker {
     let x: CGFloat
@@ -30,6 +36,7 @@ struct ShowOptions {
     var sound = "tick"
     var volume: Float = 0.6
     var logPath: String?
+    var stateDirectory: String?
 }
 
 func fail(_ message: String) -> Never {
@@ -47,78 +54,6 @@ func primaryScreen() -> NSScreen {
 func printJSON(_ object: [String: Any]) {
     let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     print(String(data: data, encoding: .utf8)!)
-}
-
-// MARK: - Sounds
-
-let systemSoundsDirectory = "/System/Library/Sounds"
-
-func systemSoundNames() -> [String] {
-    let names = (try? FileManager.default.contentsOfDirectory(atPath: systemSoundsDirectory)) ?? []
-    return names.filter { $0.hasSuffix(".aiff") }.map { String($0.dropLast(5)) }.sorted()
-}
-
-/// A short synthesized click: a decaying two-tone burst with a touch of noise, as 16-bit mono WAV.
-func tickWaveData() -> Data {
-    let sampleRate = 44_100
-    let sampleCount = Int(Double(sampleRate) * 0.045)
-    var samples = [Int16](repeating: 0, count: sampleCount)
-    var seed: UInt32 = 12_345
-    for index in 0..<sampleCount {
-        let t = Double(index) / Double(sampleRate)
-        let envelope = exp(-t * 90)
-        let tone = sin(2 * .pi * 1_800 * t) * 0.7 + sin(2 * .pi * 3_600 * t) * 0.2
-        seed = seed &* 1_664_525 &+ 1_013_904_223
-        let noise = (Double(seed >> 8) / Double(1 << 24) * 2 - 1) * 0.25 * exp(-t * 400)
-        let value = max(-1, min(1, (tone + noise) * envelope))
-        samples[index] = Int16(value * 32_767 * 0.9)
-    }
-    var data = Data()
-    func append<T>(_ value: T) {
-        var copy = value
-        withUnsafeBytes(of: &copy) { data.append(contentsOf: $0) }
-    }
-    let byteCount = UInt32(sampleCount * 2)
-    data.append("RIFF".data(using: .ascii)!)
-    append(UInt32(36 + byteCount))
-    data.append("WAVE".data(using: .ascii)!)
-    data.append("fmt ".data(using: .ascii)!)
-    append(UInt32(16))
-    append(UInt16(1))
-    append(UInt16(1))
-    append(UInt32(sampleRate))
-    append(UInt32(sampleRate * 2))
-    append(UInt16(2))
-    append(UInt16(16))
-    data.append("data".data(using: .ascii)!)
-    append(byteCount)
-    samples.withUnsafeBytes { data.append(contentsOf: $0) }
-    return data
-}
-
-/// Resolves a sound name to an NSSound. Names: "none", "tick", a macOS system sound such as
-/// "Tink" or "Pop" (case-insensitive), or a path to an audio file.
-func makeSound(named name: String, volume: Float) -> NSSound? {
-    let trimmed = name.trimmingCharacters(in: .whitespaces)
-    if trimmed.isEmpty || trimmed.lowercased() == "none" { return nil }
-    var sound: NSSound?
-    if trimmed.lowercased() == "tick" {
-        sound = NSSound(data: tickWaveData())
-    } else if trimmed.contains("/") {
-        sound = NSSound(contentsOfFile: (trimmed as NSString).expandingTildeInPath, byReference: false)
-    } else if let match = systemSoundNames().first(where: { $0.lowercased() == trimmed.lowercased() }) {
-        sound = NSSound(contentsOfFile: "\(systemSoundsDirectory)/\(match).aiff", byReference: false)
-    }
-    sound?.volume = max(0, min(1, volume))
-    return sound
-}
-
-func playAndWait(_ sound: NSSound, timeout: Double = 5) {
-    sound.play()
-    let deadline = Date().addingTimeInterval(timeout)
-    while sound.isPlaying && Date() < deadline {
-        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
-    }
 }
 
 // MARK: - Argument parsing
@@ -143,6 +78,8 @@ func parseShowOptions(_ args: [String]) -> ShowOptions {
             options.volume = volume
         case "--log":
             options.logPath = value(for: "--log")
+        case "--state-dir":
+            options.stateDirectory = value(for: "--state-dir")
         case "--marker":
             let raw = value(for: "--marker")
             let parts = raw.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
@@ -287,7 +224,7 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
     let options: ShowOptions
     var window: NSWindow!
     var view: MarkerView!
-    var sound: NSSound?
+    var player: SoundPlayer!
     var startedAt = Date()
     var fadingOut = false
     var signalSources: [DispatchSourceSignal] = []
@@ -328,22 +265,17 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
         window.contentView = view
         window.orderFrontRegardless()
 
-        sound = makeSound(named: options.sound, volume: options.volume)
-        if sound == nil && options.sound.lowercased() != "none" && !options.sound.isEmpty {
-            log("sound '\(options.sound)' not found, staying silent")
-        }
-        log("shown markers=\(options.markers.count) sound=\(sound == nil ? "none" : options.sound)")
+        player = SoundPlayer(spec: options.sound, volume: options.volume, stateDirectory: options.stateDirectory)
+        if let problem = player.problem { log("sound problem: \(problem), staying silent") }
+        log("shown markers=\(options.markers.count) sound=\(player.isSilent ? "none" : options.sound)")
 
         // Synthetic clicks posted by computer use reach global monitors like real ones, so this
         // fires at the moment each click lands, which is when the sound and the press animation belong.
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [self] event in
             let location = NSEvent.mouseLocation
             view.press(at: location)
-            if let sound = sound {
-                if sound.isPlaying { sound.stop() }
-                sound.play()
-            }
-            log("mouse-down type=\(event.type.rawValue) at=(\(Int(location.x)),\(Int(screen.frame.height - location.y))) sound=\(sound == nil ? "none" : "played")")
+            let played = player.play()
+            log("mouse-down type=\(event.type.rawValue) at=(\(Int(location.x)),\(Int(screen.frame.height - location.y))) sound=\(played)")
         }
         if clickMonitor == nil { log("global mouse monitor unavailable") }
 
@@ -352,7 +284,7 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
             view.phase = CGFloat(elapsed.truncatingRemainder(dividingBy: 1.0))
             if fadingOut || elapsed > options.ttl - 0.3 {
                 view.alphaScale = max(0, view.alphaScale - 0.12)
-                if view.alphaScale <= 0 && !(sound?.isPlaying ?? false) { finish() }
+                if view.alphaScale <= 0 && !player.isPlaying { finish() }
             }
             view.needsDisplay = true
         }
@@ -371,47 +303,4 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
         log("exit")
         NSApp.terminate(nil)
     }
-}
-
-// MARK: - Entry point
-
-let arguments = Array(CommandLine.arguments.dropFirst())
-guard let command = arguments.first else {
-    fail("usage: click-overlay show|sounds|play|cursor|screen ...")
-}
-
-switch command {
-case "screen":
-    let screen = primaryScreen()
-    printJSON([
-        "name": screen.localizedName,
-        "width": Int(screen.frame.width),
-        "height": Int(screen.frame.height),
-        "backingScale": Double(screen.backingScaleFactor),
-    ])
-case "cursor":
-    guard let location = CGEvent(source: nil)?.location else { fail("cannot read cursor") }
-    printJSON(["x": Double(location.x), "y": Double(location.y)])
-case "sounds":
-    print("none")
-    print("tick")
-    for name in systemSoundNames() { print(name) }
-    print("<path to an .aiff, .wav, .caf or .mp3 file>")
-case "play":
-    let rest = Array(arguments.dropFirst())
-    guard let name = rest.first else { fail("usage: click-overlay play NAME [--volume 0..1]") }
-    var volume: Float = 0.6
-    if rest.count >= 3, rest[1] == "--volume", let parsed = Float(rest[2]) { volume = parsed }
-    guard let sound = makeSound(named: name, volume: volume) else { fail("unknown sound: \(name). Run 'click-overlay sounds' to list the options.") }
-    playAndWait(sound)
-    print("played \(name)")
-case "show":
-    let options = parseShowOptions(Array(arguments.dropFirst()))
-    let app = NSApplication.shared
-    app.setActivationPolicy(.accessory)
-    let delegate = OverlayDelegate(options: options)
-    app.delegate = delegate
-    app.run()
-default:
-    fail("unknown command: \(command)")
 }

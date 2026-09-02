@@ -4,7 +4,11 @@ import os
 import sys
 import tempfile
 
-os.environ["CLICK_OVERLAY_STATE_DIR"] = tempfile.mkdtemp(prefix="click-overlay-test-")
+import json
+
+STATE_DIR = tempfile.mkdtemp(prefix="click-overlay-test-")
+os.environ["CLICK_OVERLAY_STATE_DIR"] = STATE_DIR
+os.environ["CLICK_OVERLAY_CONFIG"] = os.path.join(STATE_DIR, "config.json")
 os.environ["CLICK_OVERLAY_SOUND"] = "Pop"
 os.environ["CLICK_OVERLAY_VOLUME"] = "0.4"
 os.environ["CLICK_OVERLAY_PREVIEW_MS"] = "0"
@@ -65,7 +69,17 @@ for payload, expected_markers in CASES:
         command = launched[0] if launched else []
         markers = [command[i + 1] for i, token in enumerate(command) if token == "--marker"]
         options = dict(zip(command[2::2], command[3::2]))
-        ok = markers == expected_markers and options.get("--sound") == "Pop" and options.get("--volume") == "0.4" and "--log" in command
+        ok = markers == expected_markers and options.get("--sound") == "Pop" and options.get("--volume") == "0.4" and "--log" in command and options.get("--state-dir") == STATE_DIR
         print("%s %s -> %s sound=%s volume=%s" % ("ok  " if ok else "FAIL", hook.action_name(payload["tool_name"]), markers, options.get("--sound"), options.get("--volume")))
     failed |= not ok
+
+# The config file written by `click-overlay use` must win over the environment.
+with open(os.environ["CLICK_OVERLAY_CONFIG"], "w", encoding="utf-8") as handle:
+    json.dump({"sound": "melody:tetris", "volume": 0.5}, handle)
+launched.clear()
+hook.pre(CASES[0][0])
+options = dict(zip(launched[0][2::2], launched[0][3::2]))
+ok = options.get("--sound") == "melody:tetris" and options.get("--volume") == "0.5"
+print("%s config file overrides environment -> sound=%s volume=%s" % ("ok  " if ok else "FAIL", options.get("--sound"), options.get("--volume")))
+failed |= not ok
 sys.exit(1 if failed else 0)

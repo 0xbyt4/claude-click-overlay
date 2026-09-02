@@ -20,7 +20,7 @@ command -v python3 >/dev/null 2>&1 || { echo "python3 not found." >&2; exit 1; }
 
 mkdir -p "$BIN_DIR"
 echo "Building overlay binary..."
-swiftc -O -o "$BIN_DIR/click-overlay" "$REPO_DIR/overlay/ClickOverlay.swift"
+swiftc -O -o "$BIN_DIR/click-overlay" "$REPO_DIR"/overlay/*.swift
 "$BIN_DIR/click-overlay" screen >/dev/null
 
 echo "Running tests..."
