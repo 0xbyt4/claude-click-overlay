@@ -153,8 +153,10 @@ are set.
 | type, key, hold_key | a banner at the top of the screen showing the text or key about to be sent |
 | computer_batch | one marker or banner line per action, numbered in execution order |
 
-While Claude types, every keystroke flashes the banner border and plays the key sound. A scroll
-gesture plays the scroll sound and pulses its blue marker.
+While Claude types, every keystroke flashes the banner border and plays the key sound. Computer
+use types at roughly 100 keystrokes per second, so the key sound is rate-limited to one per
+30 ms; the count and the flash still follow every keystroke. A scroll gesture plays the scroll
+sound and pulses its blue marker.
 
 Press `Esc` to abort computer use as usual. The overlay fades out on its own.
 

@@ -151,3 +151,26 @@ Accessibility grant that computer use itself requires; the overlay logs
 `accessibilityTrusted=true` at startup so a missing grant is visible in the log. Keystrokes
 posted by computer use arrive with `keyCode=0`, which is why the banner counts keystrokes
 instead of decoding them.
+
+## 9. Dropped key events and the audio engine
+
+A 783-character note produced only 341 key-down events in the overlay, while a 60-character
+test earlier had produced all 60. Three controlled `type` calls of 100 characters each
+(ASCII on one line, ASCII with newlines, Turkish letters) all showed one character per event
+(`chars=1`) but only 59 to 74 events, so the sender was posting every keystroke and the overlay
+was missing some. Repeating the ASCII line with the key sound disabled captured 100 of 100.
+
+Cause: the key monitor handler restarted an `NSSound` and wrote the log file synchronously on
+every keystroke. Computer use types at about 100 keystrokes per second, and a global monitor
+whose handler cannot keep up loses events instead of queueing them.
+
+Fix: playback moved to one shared `AVAudioEngine` with prepared PCM buffers, where scheduling a
+sound costs microseconds and sounds overlap on a small pool of player nodes; log writes moved
+to a background queue; the key sound is rate-limited to one per 30 ms while every keystroke is
+still counted and flashes the banner.
+
+| Test | Before | After |
+| :-- | :-- | :-- |
+| 100 ASCII characters, key sound on | 59 events | 101 of 101 (with a leading newline) |
+| 100 Turkish letters, key sound on | 69 events | 101 of 101 |
+| 849-character note in four `type` actions plus cmd+n | not run | 850 of 850, 91 keys/s, 237 sounds played |

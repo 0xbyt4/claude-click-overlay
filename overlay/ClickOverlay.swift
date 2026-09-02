@@ -300,15 +300,21 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
         self.options = options
     }
 
+    let logQueue = DispatchQueue(label: "click-overlay.log")
+    var lastKeySound = Date.distantPast
+
+    /// Appends to the log file on a background queue so event monitors return immediately.
     func log(_ message: String) {
         guard let path = options.logPath else { return }
         let line = "\(dateFormatter.string(from: Date())) overlay[\(ProcessInfo.processInfo.processIdentifier)] \(message)\n"
-        if let handle = FileHandle(forWritingAtPath: path) {
-            handle.seekToEndOfFile()
-            handle.write(line.data(using: .utf8)!)
-            handle.closeFile()
-        } else {
-            FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
+        logQueue.async {
+            if let handle = FileHandle(forWritingAtPath: path) {
+                handle.seekToEndOfFile()
+                handle.write(line.data(using: .utf8)!)
+                handle.closeFile()
+            } else {
+                FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
+            }
         }
     }
 
@@ -344,10 +350,19 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
         }) { monitors.append(monitor) } else { log("global mouse monitor unavailable") }
 
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown], handler: { [self] event in
+            // Keep this handler cheap: computer use types at roughly 100 keystrokes per second and
+            // the monitor drops events when the handler cannot keep up. Every keystroke is counted;
+            // the sound is rate-limited so rapid typing sounds like typing instead of a buzz.
             view.keystrokes += 1
-            view.keyFlashAt = Date()
-            let played = keyPlayer.play()
-            log("key-down keyCode=\(event.keyCode) count=\(view.keystrokes) sound=\(played)")
+            let now = Date()
+            view.keyFlashAt = now
+            var played = "throttled"
+            if now.timeIntervalSince(lastKeySound) >= 0.03 {
+                lastKeySound = now
+                played = keyPlayer.play()
+            }
+            let characters = event.characters ?? ""
+            log("key-down keyCode=\(event.keyCode) chars=\(characters.count) count=\(view.keystrokes) sound=\(played)")
         }) { monitors.append(monitor) } else { log("global key monitor unavailable") }
 
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel], handler: { [self] event in
@@ -382,6 +397,7 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
     func finish() {
         for monitor in monitors { NSEvent.removeMonitor(monitor) }
         log("exit keystrokes=\(view.keystrokes)")
+        logQueue.sync {}
         NSApp.terminate(nil)
     }
 }
