@@ -31,6 +31,12 @@ def simulate(true_size):
 
 
 failed = False
+# Exact halves must round up like the CLI: 805 * 1470 / 1372 is exactly 862.5 and lands on 863.
+half = hook.to_logical(805, 600, SCREEN, (1372, 892))
+ok = half == (863, 643)
+failed |= not ok
+print("%s half-up rounding: image (805, 600) -> %s (expected (863, 643))" % ("ok  " if ok else "FAIL", half))
+
 for true_size, expected_source in [((1372, 892), "predicted"), ((1400, 910), "samples"), ((1360, 884), "samples")]:
     try:
         os.remove(hook.CALIBRATION_FILE)

@@ -122,11 +122,6 @@ def save_calibration(data):
     os.replace(tmp, CALIBRATION_FILE)
 
 
-def js_round(value):
-    """JavaScript Math.round: halves round toward positive infinity."""
-    return math.floor(value + 0.5)
-
-
 def tile_count(width, height):
     return ((width - 1) // PX_PER_TOKEN + 1) * ((height - 1) // PX_PER_TOKEN + 1)
 
@@ -161,11 +156,17 @@ def image_size(screen, calibration):
     return width, height, "predicted"
 
 
+def js_round(value):
+    """JavaScript Math.round: halves round toward positive infinity."""
+    return math.floor(value + 0.5)
+
+
 def to_logical(x, y, screen, size):
+    """Screenshot pixel to screen point, rounding halves up like the CLI's Math.round."""
     image_width, image_height = size
     return (
-        round(x * screen["width"] / image_width),
-        round(y * screen["height"] / image_height),
+        js_round(x * screen["width"] / image_width),
+        js_round(y * screen["height"] / image_height),
     )
 
 

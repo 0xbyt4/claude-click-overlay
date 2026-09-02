@@ -216,3 +216,12 @@ action runs and a stuck overlay can never hold up computer use for more than the
 | Spawn to ready (monitors installed), warm | 112 ms |
 | Audio ready after that | 93 to 97 ms |
 | Live click after the change | mouse-down captured 796 ms after `shown`, with sound |
+
+## 12. Rounding halves
+
+While navigating System Settings the calibration briefly switched to a 1371 px width after a
+scroll at image coordinate (805, 600), then a later click confirmed 1372 again. The cause was
+not the CLI: 805 x 1470 / 1372 is exactly 862.5, and the CLI's `Math.round` maps it to 863
+while Python's `round` uses banker's rounding and gave 862. The hook now rounds halves up in
+the coordinate mapping, matching the CLI, and a regression test covers this exact input. A
+scroll at the same point afterwards confirmed the prediction and kept 1372 x 892.
