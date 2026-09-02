@@ -51,7 +51,7 @@ def load_config():
 
 
 def sound_settings():
-    """Return click, key, and scroll sound specs plus the volume: config file, then environment, then defaults."""
+    """Sounds, typing mode, and banner choice: config file, then environment, then defaults."""
     config = load_config()
 
     def pick(config_key, env_key, default):
@@ -60,12 +60,52 @@ def sound_settings():
             value = os.environ.get(env_key) or default
         return str(value).strip() or "none"
 
+    typing = pick("typing", "CLICK_OVERLAY_TYPING", "fast").lower()
+    if typing not in ("fast", "asmr"):
+        typing = "fast"
     return {
         "sound": pick("sound", "CLICK_OVERLAY_SOUND", "mouse"),
-        "key_sound": pick("key_sound", "CLICK_OVERLAY_KEY_SOUND", "mechkey"),
+        # Computer use types at about 100 keystrokes per second, which no key sound survives, so
+        # typing is silent unless the human-paced mode is on or a key sound is chosen explicitly.
+        "key_sound": pick("key_sound", "CLICK_OVERLAY_KEY_SOUND", "mechkey" if typing == "asmr" else "none"),
         "scroll_sound": pick("scroll_sound", "CLICK_OVERLAY_SCROLL_SOUND", "none"),
         "volume": pick("volume", "CLICK_OVERLAY_VOLUME", "0.6"),
+        "typing": typing,
+        "typing_banner": pick("typing_banner", "CLICK_OVERLAY_TYPING_BANNER", "off").lower() == "on",
+        "asmr_cps": pick("asmr_cps", "CLICK_OVERLAY_ASMR_CPS", "10"),
+        "asmr_max_seconds": pick("asmr_max_seconds", "CLICK_OVERLAY_ASMR_MAX_SECONDS", "60"),
     }
+
+
+ASMR_STASH_PREFIX = "asmr-"
+ASMR_STASH_MAX_AGE = 600
+
+
+def stash_path(tool_use_id):
+    safe = "".join(ch for ch in str(tool_use_id) if ch.isalnum() or ch in "-_")[:80] or "unknown"
+    return os.path.join(STATE_DIR, ASMR_STASH_PREFIX + safe + ".json")
+
+
+def clean_stale_stashes():
+    try:
+        names = os.listdir(STATE_DIR)
+    except OSError:
+        return
+    for name in names:
+        if not name.startswith(ASMR_STASH_PREFIX):
+            continue
+        path = os.path.join(STATE_DIR, name)
+        try:
+            if time.time() - os.path.getmtime(path) > ASMR_STASH_MAX_AGE:
+                os.remove(path)
+        except OSError:
+            pass
+
+
+def emit(output):
+    """Write a hook JSON decision to stdout (the only time the hook prints anything)."""
+    sys.stdout.write(json.dumps(output))
+    sys.stdout.flush()
 
 # Claude Code downsamples the screenshot so that the image fits the model's vision budget:
 # no side above MAX_TARGET_PX and at most MAX_TARGET_TOKENS tiles of PX_PER_TOKEN pixels.
@@ -209,11 +249,11 @@ def describe_keyboard(action):
     return "key %s" % text + (" x%d" % repeat if repeat > 1 else "")
 
 
-def overlay_args(tool_name, tool_input, screen, size):
+def overlay_args(tool_name, tool_input, screen, size, banner_enabled=False):
     """Build --marker and --banner arguments, numbering the visible actions in execution order."""
     visible = [a for a in actions_in(tool_name, tool_input)
                if (a["action"] in POINTER_ACTIONS and a["action"] != "mouse_move" and a.get("coordinate"))
-               or a["action"] in KEYBOARD_ACTIONS]
+               or (banner_enabled and a["action"] in KEYBOARD_ACTIONS)]
     args = []
     for index, action in enumerate(visible, start=1):
         number = "%d " % index if len(visible) > 1 else ""
@@ -251,23 +291,50 @@ def stop_overlay():
         pass
 
 
+def typed_texts(tool_name, tool_input):
+    """Texts of the type actions in the call that are long enough to pace."""
+    return [str(a.get("text") or "") for a in actions_in(tool_name, tool_input) if a["action"] == "type" and len(str(a.get("text") or "")) > 1]
+
+
 def pre(payload):
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
     if not os.path.exists(OVERLAY_BIN):
         log("overlay binary missing at %s; run install.sh" % OVERLAY_BIN)
         return
+    settings = sound_settings()
+    os.makedirs(STATE_DIR, exist_ok=True)
+    clean_stale_stashes()
+
+    if settings["typing"] == "asmr":
+        texts = typed_texts(tool_name, tool_input)
+        if action_name(tool_name) == "type" and texts:
+            # Let the CLI type the first character, which checks that the frontmost app accepts
+            # typing; the post hook types the rest at human pace.
+            text = texts[0]
+            with open(stash_path(payload.get("tool_use_id")), "w", encoding="utf-8") as handle:
+                json.dump({"remainder": text[1:], "created": time.time()}, handle)
+            log("pre type asmr: CLI types 1 character, %d queued for human pace" % (len(text) - 1))
+            emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": dict(tool_input, text=text[0])}})
+            return
+        if action_name(tool_name) == "computer_batch" and texts:
+            log("pre computer_batch asmr: blocked, %d type action(s) must be standalone" % len(texts))
+            emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                  "permissionDecisionReason": "Blocked before running, nothing was executed: the click-overlay ASMR typing mode "
+                  "requires text to be sent with the standalone type tool, not inside computer_batch. Re-send this batch "
+                  "without the type action(s) and call type separately for each text."}})
+            return
+
     screen = run_overlay(["screen"])
     width, height, source = image_size(screen, load_calibration())
-    args = overlay_args(tool_name, tool_input, screen, (width, height))
-    if not args:
+    args = overlay_args(tool_name, tool_input, screen, (width, height), settings["typing_banner"])
+    has_keyboard = any(a["action"] in KEYBOARD_ACTIONS for a in actions_in(tool_name, tool_input))
+    if not args and not (has_keyboard and settings["key_sound"] != "none"):
         return
     stop_overlay()
     if os.path.exists(OVERLAY_LOG_FILE) and os.path.getsize(OVERLAY_LOG_FILE) > LOG_MAX_BYTES:
         os.replace(OVERLAY_LOG_FILE, OVERLAY_LOG_FILE + ".1")
-    settings = sound_settings()
     sound = settings["sound"]
-    os.makedirs(STATE_DIR, exist_ok=True)
     try:
         os.remove(READY_FILE)
     except OSError:
@@ -371,11 +438,53 @@ def calibrate(payload):
     log("calibration %s: prediction %dx%d does not match, using %dx%d from %d sample(s)" % (key, predicted[0], predicted[1], size[0], size[1], len(samples)))
 
 
+def type_remainder(payload):
+    """In ASMR mode, type the rest of a stashed text at human pace after the CLI typed its first character."""
+    path = stash_path(payload.get("tool_use_id"))
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, encoding="utf-8") as handle:
+            remainder = json.load(handle).get("remainder") or ""
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    if not remainder:
+        return
+    settings = sound_settings()
+    max_seconds = float(settings["asmr_max_seconds"])
+    text_file = path + ".txt"
+    with open(text_file, "w", encoding="utf-8") as handle:
+        handle.write(remainder)
+    try:
+        result = subprocess.run(
+            [OVERLAY_BIN, "type-human", "--text-file", text_file, "--cps", settings["asmr_cps"], "--max-seconds", str(max_seconds),
+             "--sound", settings["key_sound"], "--volume", settings["volume"], "--log", OVERLAY_LOG_FILE],
+            capture_output=True, text=True, timeout=max_seconds + 20)
+    finally:
+        try:
+            os.remove(text_file)
+        except OSError:
+            pass
+    summary = (result.stdout or result.stderr).strip()
+    log("post type asmr: %s (exit %d)" % (summary, result.returncode))
+    if result.returncode == 3:
+        note = "click-overlay ASMR typing was aborted with Esc by the user; the text is incomplete: %s" % summary
+    elif result.returncode != 0:
+        note = "click-overlay ASMR typing failed, only the first character was typed: %s" % summary
+    else:
+        note = "click-overlay ASMR mode: after the first character, the remaining %d characters were typed at human pace (%s)." % (len(remainder), summary)
+    emit({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": note}})
+
+
 def post(payload):
     if LINGER_SECONDS > 0 and os.path.exists(PID_FILE):
         time.sleep(LINGER_SECONDS)
     stop_overlay()
     if os.path.exists(OVERLAY_BIN):
+        type_remainder(payload)
         calibrate(payload)
 
 

@@ -225,3 +225,27 @@ not the CLI: 805 x 1470 / 1372 is exactly 862.5, and the CLI's `Math.round` maps
 while Python's `round` uses banker's rounding and gave 862. The hook now rounds halves up in
 the coordinate mapping, matching the CLI, and a regression test covers this exact input. A
 scroll at the same point afterwards confirmed the prediction and kept 1372 x 892.
+
+## 13. Human-paced typing
+
+Feedback from use: at 100 keystrokes per second a key sound is noise, and a banner with the
+full text is silly for long notes. Typing is now silent and undrawn by default. The `asmr`
+mode paces the typing instead of the sound.
+
+The pacing cannot come from the CLI, which has no speed setting, and typing from the hook alone
+would bypass the CLI's per-app permission tiers (terminals are click-only, browsers view-only).
+So the pre hook rewrites the `type` input to its first character through `updatedInput`, the
+CLI types that one character and thereby enforces its tiers, and the post hook, which only runs
+after a successful call, types the remainder with `click-overlay type-human`: log-normal
+jitter around the base rate, a longer beat after spaces, punctuation, and line breaks, an
+occasional pause, and the key sound played as each keystroke is posted. A `computer_batch`
+containing a `type` action is denied with an explanation so the model re-sends the text as a
+standalone call, keeping the order of actions intact.
+
+| Check | Result |
+| :-- | :-- |
+| Standalone `type` of 92 characters | CLI typed 1, post hook typed 91 in 12.1 s at 10 cps |
+| Text in TextEdit afterwards | complete, Turkish characters intact |
+| Note returned to the model | one line, 91 characters typed at human pace |
+| Batch with a `type` action | blocked before running, reason shown to the model |
+| Esc during paced typing | aborts and reports the count typed (unit-level check) |

@@ -19,7 +19,7 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/hooks/hook.py post",
-            "timeout": 10
+            "timeout": 600
           }
         ]
       }

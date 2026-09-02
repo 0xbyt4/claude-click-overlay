@@ -48,7 +48,7 @@ for event, matcher, mode in (("PreToolUse", matcher_pre, "pre"), ("PostToolUse",
     command = "%s %s" % (hook, mode)
     if any(h.get("command") == command for e in entries for h in e.get("hooks", [])):
         continue
-    entries.append({"matcher": matcher, "hooks": [{"type": "command", "command": command, "timeout": 10}]})
+    entries.append({"matcher": matcher, "hooks": [{"type": "command", "command": command, "timeout": 10 if mode == "pre" else 600}]})
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(settings, handle, indent=2)
     handle.write("\n")
@@ -70,7 +70,7 @@ Add this to ~/.claude/settings.json (or run ./install.sh --user to do it for you
     "PostToolUse": [
       {
         "matcher": "$MATCHER_POST",
-        "hooks": [{ "type": "command", "command": "$HOOK_JSON post", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "$HOOK_JSON post", "timeout": 600 }]
       }
     ]
   }

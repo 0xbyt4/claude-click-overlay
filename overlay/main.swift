@@ -5,7 +5,7 @@ import Foundation
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard let command = arguments.first else {
-    fail("usage: click-overlay show|sounds|play|render|use|cursor|screen ...")
+    fail("usage: click-overlay show|sounds|play|render|use|type-human|cursor|screen ...")
 }
 
 switch command {
@@ -26,7 +26,7 @@ case "sounds":
     print("System sounds: " + systemSoundNames().joined(separator: ", "))
     print("Melodies (one note per click): " + melodies.map { "melody:\($0.name) (\($0.summary))" }.joined(separator: ", "))
     print("Modes: random | random:a,b,c | say:TEXT | /path/to/file.aiff | none")
-    print("Choose: click-overlay use CLICK_SPEC [--key SPEC] [--scroll SPEC] [--volume 0..1]")
+    print("Choose: click-overlay use CLICK_SPEC [--key SPEC] [--scroll SPEC] [--typing fast|asmr] [--banner on|off] [--cps N] [--volume 0..1]")
 case "play", "render", "use":
     var rest = Array(arguments.dropFirst())
     var volume: Float = 0.6
@@ -42,10 +42,24 @@ case "play", "render", "use":
     }
     var keySpec: String?
     var scrollSpec: String?
-    for (flag, target) in [("--key", 0), ("--scroll", 1)] {
+    var extras: [String: Any] = [:]
+    for (flag, target) in [("--key", 0), ("--scroll", 1), ("--typing", 2), ("--banner", 3), ("--cps", 4)] {
         if let index = rest.firstIndex(of: flag) {
-            guard index + 1 < rest.count else { fail("\(flag) needs a sound spec") }
-            if target == 0 { keySpec = rest[index + 1] } else { scrollSpec = rest[index + 1] }
+            guard index + 1 < rest.count else { fail("\(flag) needs a value") }
+            let value = rest[index + 1]
+            switch target {
+            case 0: keySpec = value
+            case 1: scrollSpec = value
+            case 2:
+                guard ["fast", "asmr"].contains(value.lowercased()) else { fail("--typing must be fast or asmr") }
+                extras["typing"] = value.lowercased()
+            case 3:
+                guard ["on", "off"].contains(value.lowercased()) else { fail("--banner must be on or off") }
+                extras["typing_banner"] = value.lowercased()
+            default:
+                guard let cps = Double(value), cps > 0 else { fail("--cps needs a positive number") }
+                extras["asmr_cps"] = NSDecimalNumber(string: String(format: "%.1f", cps))
+            }
             rest.removeSubrange(index...index + 1)
         }
     }
@@ -54,7 +68,7 @@ case "play", "render", "use":
     }
     let spec = rest.first
     if command != "use" && spec == nil { fail("usage: click-overlay \(command) SPEC [--volume 0..1]") }
-    if command == "use" && spec == nil && keySpec == nil && scrollSpec == nil { fail("usage: click-overlay use [CLICK_SPEC] [--key SPEC] [--scroll SPEC] [--volume 0..1] | use --clear") }
+    if command == "use" && spec == nil && keySpec == nil && scrollSpec == nil && extras.isEmpty { fail("usage: click-overlay use [CLICK_SPEC] [--key SPEC] [--scroll SPEC] [--typing fast|asmr] [--banner on|off] [--cps N] [--volume 0..1] | use --clear") }
     let player = SoundPlayer(spec: spec ?? "none", volume: volume, stateDirectory: nil)
     if let problem = player.problem { fail("\(problem). Run 'click-overlay sounds' to list the options.") }
     if command == "play" {
@@ -69,10 +83,15 @@ case "play", "render", "use":
         if let spec = spec { config["sound"] = spec }
         if let keySpec = keySpec { config["key_sound"] = keySpec }
         if let scrollSpec = scrollSpec { config["scroll_sound"] = scrollSpec }
+        for (key, value) in extras { config[key] = value }
         config["volume"] = NSDecimalNumber(string: String(format: "%.2f", volume))
         do { try writeConfig(config) } catch { fail("cannot write config: \(error.localizedDescription)") }
-        print("click=\(config["sound"] ?? "mouse") key=\(config["key_sound"] ?? "mechkey") scroll=\(config["scroll_sound"] ?? "none") volume=\(volume) saved to \(configPath())")
+        let typing = (config["typing"] as? String) ?? "fast"
+        let keyDefault = typing == "asmr" ? "mechkey" : "none"
+        print("click=\(config["sound"] ?? "mouse") key=\(config["key_sound"] ?? keyDefault) scroll=\(config["scroll_sound"] ?? "none") typing=\(typing) banner=\(config["typing_banner"] ?? "off") volume=\(volume) saved to \(configPath())")
     }
+case "type-human":
+    runHumanTyping(parseHumanTypingOptions(Array(arguments.dropFirst())))
 case "show":
     let options = parseShowOptions(Array(arguments.dropFirst()))
     let app = NSApplication.shared

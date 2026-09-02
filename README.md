@@ -15,7 +15,8 @@ that advance one note per click, spoken words, your own audio file, or silence.
 It is implemented entirely with Claude Code hooks, so:
 
 - **Zero extra tokens.** The hooks print nothing to stdout. Nothing reaches the model's context.
-  Verified by inspecting the session transcript: the tool result stays exactly `Clicked.`
+  Verified by inspecting the session transcript: the tool result stays exactly `Clicked.` The
+  one exception is the opt-in asmr typing mode, which adds a short note per `type` call.
 - **No new MCP server.** The model does not know the overlay exists and cannot forget to use it.
 - **Never blocks computer use.** Every failure path logs and exits 0.
 - **Invisible to Claude.** The overlay is not in the computer-use allowlist, so it is excluded
@@ -80,7 +81,11 @@ Environment variables read by the hook:
 | `CLICK_OVERLAY_READY_TIMEOUT_MS` | `3000` | Longest wait for the overlay to come up before the action runs anyway |
 | `CLICK_OVERLAY_MAX_TTL_S` | `120` | Safety limit for an overlay that is never dismissed |
 | `CLICK_OVERLAY_SOUND` | `mouse` | Click sound, see [Sounds](#sounds) |
-| `CLICK_OVERLAY_KEY_SOUND` | `mechkey` | Sound per keystroke while Claude types |
+| `CLICK_OVERLAY_KEY_SOUND` | `none` (`mechkey` in asmr mode) | Sound per keystroke while Claude types |
+| `CLICK_OVERLAY_TYPING` | `fast` | `fast` or `asmr`, see [Typing modes](#typing-modes) |
+| `CLICK_OVERLAY_TYPING_BANNER` | `off` | `on` shows the upcoming text or key in a banner |
+| `CLICK_OVERLAY_ASMR_CPS` | `10` | Characters per second in asmr mode |
+| `CLICK_OVERLAY_ASMR_MAX_SECONDS` | `60` | Time budget per `type` call in asmr mode |
 | `CLICK_OVERLAY_SCROLL_SOUND` | `none` | Sound per scroll gesture |
 | `CLICK_OVERLAY_VOLUME` | `0.6` | Sound volume from `0` to `1` |
 | `CLICK_OVERLAY_BIN` | `overlay/build/click-overlay` | Overlay binary location |
@@ -130,14 +135,44 @@ overlay/build/click-overlay use --clear            # back to the defaults
 | `none` | silent |
 
 Clicks, keystrokes, and scrolling each have their own sound. Defaults: `mouse` for clicks,
-`mechkey` for keystrokes, `none` for scrolling. Both defaults come in several variants with
-small pitch and timing differences, picked at random per event so fast typing does not sound
-like one sample on repeat.
+`none` for keystrokes, `none` for scrolling. `mouse` and `mechkey` come in several variants
+with small pitch and timing differences, picked at random per event.
 
 ```sh
-overlay/build/click-overlay use coin --key typewriter --scroll bubble
-overlay/build/click-overlay use --key none          # keep clicks, silence typing
+overlay/build/click-overlay use coin --scroll bubble
+overlay/build/click-overlay use --key keyboard       # a sound per keystroke, even in fast mode
 ```
+
+## Typing modes
+
+Computer use types at roughly 100 keystrokes per second. No key sound survives that, so in the
+default `fast` mode typing is silent and nothing is drawn for it.
+
+`asmr` mode makes Claude type like a person. The pre hook lets the CLI type only the first
+character of a `type` call, which is the CLI's own check that the frontmost app accepts
+typing, and the post hook then types the rest at about 10 characters per second with natural
+jitter, pauses after punctuation, and the mechanical keyboard sound on every keystroke.
+Press `Esc` to abort the paced typing.
+
+```sh
+overlay/build/click-overlay use --typing asmr        # human pace, mechkey sound
+overlay/build/click-overlay use --typing asmr --cps 14
+overlay/build/click-overlay use --typing fast        # back to instant, silent typing
+overlay/build/click-overlay use --banner on          # show the upcoming text in a banner
+```
+
+Two things to know about `asmr` mode:
+
+- Text must be sent with the standalone `type` tool. A `computer_batch` that contains a
+  `type` action is blocked before it runs, with a message telling Claude to re-send the batch
+  without the text and call `type` separately. That message and the post hook's note about
+  the paced typing are the only text this tool ever adds to the model's context, and only in
+  this mode.
+- Long texts speed up so a single call never takes longer than `asmr_max_seconds`
+  (60 by default).
+
+The banner is off by default because long texts make it silly; `--banner on` shows the
+upcoming text or key at the top of the screen and flashes on every keystroke.
 
 Melodies remember their position between actions, so a long batch of clicks plays the tune
 straight through and the next call continues where it stopped. The tunes are public-domain
@@ -155,13 +190,13 @@ are set.
 | left, right, middle, double, triple click | red ring with crosshair and the click type |
 | scroll | blue ring labelled `scroll` |
 | left_click_drag | orange start and end rings joined by a dashed line |
-| type, key, hold_key | a banner at the top of the screen showing the text or key about to be sent |
-| computer_batch | one marker or banner line per action, numbered in execution order |
+| type, key, hold_key | nothing by default; with the banner on, a line at the top of the screen showing the text or key |
+| computer_batch | one marker (or banner line) per action, numbered in execution order |
 
-While Claude types, every keystroke flashes the banner border and plays the key sound. Computer
-use types at roughly 100 keystrokes per second, so the key sound is rate-limited to one per
-30 ms; the count and the flash still follow every keystroke. A scroll gesture plays the scroll
-sound and pulses its blue marker.
+With the banner on, every keystroke flashes its border. If a key sound is set in fast mode it
+is rate-limited to one per 30 ms because computer use types at roughly 100 keystrokes per
+second; in asmr mode every keystroke plays. A scroll gesture plays the scroll sound and pulses
+its blue marker.
 
 Press `Esc` to abort computer use as usual. The overlay fades out on its own.
 

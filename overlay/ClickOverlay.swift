@@ -22,6 +22,8 @@ import Foundation
 //   render SPEC FILE  Writes a preset or melody to a WAV file.
 //   use SPEC [--volume 0..1] | use --clear
 //                     Saves the sound choice to the config file the hook reads on every action.
+//   type-human TEXT | --text-file FILE [--cps N] [--max-seconds N] [--sound SPEC] [--volume 0..1] [--log FILE]
+//                     Types the text with human-like pacing, playing the key sound per keystroke.
 //   cursor            Prints the current cursor position as JSON (logical points, top-left origin).
 //   screen            Prints the primary display geometry as JSON.
 //
@@ -110,7 +112,9 @@ func parseShowOptions(_ args: [String]) -> ShowOptions {
             fail("unknown argument: \(args[index])")
         }
     }
-    if options.markers.isEmpty && options.banner.isEmpty { fail("at least one --marker or --banner is required") }
+    if options.markers.isEmpty && options.banner.isEmpty && options.keySound.lowercased() == "none" {
+        fail("nothing to show: pass --marker, --banner, or a --key-sound")
+    }
     return options
 }
 
