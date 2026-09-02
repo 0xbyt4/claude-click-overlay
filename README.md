@@ -200,6 +200,17 @@ target is drawn.
 | `path` | numbered stops joined by a dashed route | showing the plan of a batch |
 | `dot` | a dot, a hairline ring, a tiny number | the quietest option |
 
+Each animation below is rendered with the overlay's own drawing code: a batch on a settings
+list where target 1 is done, 2 is next and gets clicked, then 3, while 4 is a scroll.
+
+| Reticle (default) | Ring | Sonar |
+| :-- | :-- | :-- |
+| ![reticle](docs/styles/reticle.gif) | ![ring](docs/styles/ring.gif) | ![sonar](docs/styles/sonar.gif) |
+
+| Beacon | Path | Dot |
+| :-- | :-- | :-- |
+| ![beacon](docs/styles/beacon.gif) | ![path](docs/styles/path.gif) | ![dot](docs/styles/dot.gif) |
+
 The stroke is `halo` by default: a white line with a dark halo that reads on light and dark
 apps alike, with the action's colour in the centre dot and the badge. `colour` strokes the
 shape in the action's colour instead. Colours: red for clicks, purple for right clicks, orange
@@ -255,7 +266,14 @@ python3 tools/test_calibration.py   # calibration convergence in simulation
 python3 tools/test_hook_args.py     # overlay command line built by the pre hook
 ```
 
-`tools/` also contains the probes used for the measurements in `docs/experiments.md`.
+`tools/` also contains the probes used for the measurements in `docs/experiments.md`, and
+`tools/render-styles` regenerates the style animations in `docs/styles/` from the overlay's
+drawing code:
+
+```sh
+swiftc -O -o overlay/build/render-styles tools/render-styles/main.swift overlay/ClickOverlay.swift overlay/Sounds.swift
+overlay/build/render-styles docs/styles
+```
 
 ## License
 

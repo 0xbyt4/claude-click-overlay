@@ -454,7 +454,8 @@ final class MarkerView: NSView {
             drawBadge(f.rangeText, at: NSPoint(x: f.center.x + half + 4, y: f.center.y + half + 4), tint: f.tint, alpha: f.alpha)
         }
         if f.isCurrent && !f.marker.text.isEmpty {
-            drawLabel(f.marker.text, near: NSPoint(x: f.center.x - 28, y: f.center.y - half - 24), tint: f.tint, alpha: f.alpha, small: true)
+            // To the right of the frame, level with the centre, so it never lands on the next target below.
+            drawLabel(f.marker.text, near: NSPoint(x: f.center.x + half + 12, y: f.center.y - 10), tint: f.tint, alpha: f.alpha, small: true)
         }
     }
 
@@ -554,7 +555,7 @@ final class MarkerView: NSView {
         edge.lineWidth = 2
         (f.isCurrent ? f.tint : NSColor.white).withAlphaComponent(f.alpha).setStroke()
         edge.stroke()
-        drawText(f.rangeText.isEmpty ? "\u{2022}" : f.rangeText, at: f.center, size: 11, alpha: f.alpha, centered: true)
+        drawText(f.rangeText.isEmpty ? "\u{2022}" : f.rangeText, at: f.center, size: 11, alpha: f.isDone ? f.alpha : max(f.alpha, alphaScale * 0.9), centered: true)
         if f.isCurrent && !f.marker.text.isEmpty {
             drawLabel(f.marker.text, near: NSPoint(x: f.center.x + 24, y: f.center.y + 12), tint: f.tint, alpha: f.alpha, small: true)
         }
