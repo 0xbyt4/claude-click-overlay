@@ -46,7 +46,7 @@ longer reproduces the observed cursor position and switches to a size derived fr
 ## Install
 
 ```sh
-git clone <this repository> claude-click-overlay
+git clone git@github.com:0xbyt4/claude-click-overlay.git
 cd claude-click-overlay
 ./install.sh           # builds, tests, prints the hook config
 ./install.sh --user    # additionally merges the hooks into ~/.claude/settings.json
@@ -107,3 +107,7 @@ python3 tools/test_calibration.py   # calibration convergence in simulation
 ```
 
 `tools/` also contains the probes used for the measurements in `docs/experiments.md`.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
