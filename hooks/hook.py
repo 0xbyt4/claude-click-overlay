@@ -31,6 +31,11 @@ OVERLAY_BIN = os.environ.get("CLICK_OVERLAY_BIN") or os.path.join(REPO_DIR, "ove
 PREVIEW_SECONDS = float(os.environ.get("CLICK_OVERLAY_PREVIEW_MS", "600")) / 1000.0
 MAX_TTL_SECONDS = float(os.environ.get("CLICK_OVERLAY_MAX_TTL_S", "30"))
 LINGER_SECONDS = float(os.environ.get("CLICK_OVERLAY_LINGER_MS", "350")) / 1000.0
+# Sound played by the overlay when a click lands: "tick" (built in), "none", a macOS system
+# sound such as "Tink" or "Pop", or a path to an audio file. `click-overlay sounds` lists them.
+SOUND = os.environ.get("CLICK_OVERLAY_SOUND", "tick").strip()
+VOLUME = os.environ.get("CLICK_OVERLAY_VOLUME", "0.6").strip()
+OVERLAY_LOG_FILE = os.path.join(STATE_DIR, "overlay.log")
 
 # Claude Code downsamples the screenshot so that the image fits the model's vision budget:
 # no side above MAX_TARGET_PX and at most MAX_TARGET_TOKENS tiles of PX_PER_TOKEN pixels.
@@ -203,8 +208,10 @@ def pre(payload):
     width, height, source = image_size(screen, load_calibration())
     args = marker_args(actions, screen, (width, height))
     stop_overlay()
+    if os.path.exists(OVERLAY_LOG_FILE) and os.path.getsize(OVERLAY_LOG_FILE) > LOG_MAX_BYTES:
+        os.replace(OVERLAY_LOG_FILE, OVERLAY_LOG_FILE + ".1")
     process = subprocess.Popen(
-        [OVERLAY_BIN, "show", "--ttl", str(MAX_TTL_SECONDS)] + args,
+        [OVERLAY_BIN, "show", "--ttl", str(MAX_TTL_SECONDS), "--sound", SOUND or "none", "--volume", VOLUME or "0.6", "--log", OVERLAY_LOG_FILE] + args,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -213,7 +220,7 @@ def pre(payload):
     os.makedirs(STATE_DIR, exist_ok=True)
     with open(PID_FILE, "w", encoding="utf-8") as handle:
         handle.write(str(process.pid))
-    log("pre %s markers=%s image=%dx%d(%s) pid=%d" % (action_name(tool_name), args[1::2], width, height, source, process.pid))
+    log("pre %s markers=%s image=%dx%d(%s) sound=%s pid=%d" % (action_name(tool_name), args[1::2], width, height, source, SOUND or "none", process.pid))
     time.sleep(PREVIEW_SECONDS)
 
 

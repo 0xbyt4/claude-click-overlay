@@ -83,3 +83,25 @@ does the predicted size reproduce the observed cursor position exactly? If yes, 
 is confirmed and any override is dropped. If no, the hook keeps a list of samples and picks the
 integer size that explains all of them. `tools/test_calibration.py` simulates a CLI using
 1372x892, 1400x910, and 1360x884 and checks that the hook converges to each.
+
+## 6. Detecting the click for sound and animation
+
+The sound should play when the click lands, not when the marker appears, and a batch should
+produce one sound per click. The hooks cannot provide that timing: `PreToolUse` runs before the
+whole batch and `PostToolUse` after it. So the overlay itself listens with
+`NSEvent.addGlobalMonitorForEvents` for mouse-down events, which needs no extra permission for
+mouse events.
+
+Test: a `computer_batch` with two clicks in System Settings (back arrow, then About), with the
+overlay logging every mouse-down it observes.
+
+| Marker drawn at (points) | Mouse-down observed at (points) | Sound |
+| :-- | :-- | :-- |
+| 640, 81 | 640, 81 | played |
+| 691, 303 | 691, 303 | played |
+
+The synthetic clicks posted by computer use reach the global monitor exactly like physical
+clicks, at the predicted positions. The overlay marks the nearest ring as pressed, plays the
+configured sound, and the post hook dismisses it afterwards. A failed action (the batch
+stopped because the target window belonged to an app outside the allowlist) produced markers
+but no mouse-down, and the calibration guard correctly ignored the resulting cursor sample.

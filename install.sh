@@ -26,6 +26,7 @@ swiftc -O -o "$BIN_DIR/click-overlay" "$REPO_DIR/overlay/ClickOverlay.swift"
 echo "Running tests..."
 python3 "$REPO_DIR/tools/test_sizing.py"
 python3 "$REPO_DIR/tools/test_calibration.py"
+python3 "$REPO_DIR/tools/test_hook_args.py"
 
 HOOK="python3 \"$REPO_DIR/hooks/hook.py\""
 HOOK_JSON=$(printf '%s' "$HOOK" | sed 's/"/\\"/g')

@@ -8,6 +8,9 @@ overlay that draws a pulsing ring, a crosshair, and a label at the exact spot ea
 land, roughly half a second before it happens. Batches of actions get numbered markers so you can
 see the whole plan at once.
 
+When a click lands, the overlay plays a short sound and the ring collapses with a ripple, so you
+hear and see the moment it happens. Pick the sound you like or turn it off.
+
 It is implemented entirely with Claude Code hooks, so:
 
 - **Zero extra tokens.** The hooks print nothing to stdout. Nothing reaches the model's context.
@@ -22,7 +25,10 @@ It is implemented entirely with Claude Code hooks, so:
 1. A `PreToolUse` hook matches the computer-use click, scroll, drag, and batch tools. It reads
    the coordinates from the tool input, converts them from screenshot pixels to screen points,
    launches the overlay, waits for the preview delay, and exits so the action proceeds.
-2. A `PostToolUse` hook dismisses the overlay and compares the real cursor position with the
+2. The overlay watches for mouse-down events with a global monitor. Synthetic clicks posted by
+   computer use reach it like real ones, so the sound and the press animation fire at the exact
+   moment each click lands, one per click even inside a batch.
+3. A `PostToolUse` hook dismisses the overlay and compares the real cursor position with the
    requested coordinate to confirm the coordinate mapping.
 
 ### Coordinate mapping
@@ -68,11 +74,37 @@ Environment variables read by the hook:
 | `CLICK_OVERLAY_PREVIEW_MS` | `600` | How long the marker is shown before the action runs |
 | `CLICK_OVERLAY_LINGER_MS` | `350` | How long the marker stays after the action finishes |
 | `CLICK_OVERLAY_MAX_TTL_S` | `30` | Safety limit for an overlay that is never dismissed |
+| `CLICK_OVERLAY_SOUND` | `tick` | Click sound: `tick`, `none`, a macOS system sound, or an audio file path |
+| `CLICK_OVERLAY_VOLUME` | `0.6` | Sound volume from `0` to `1` |
 | `CLICK_OVERLAY_BIN` | `overlay/build/click-overlay` | Overlay binary location |
 | `CLICK_OVERLAY_STATE_DIR` | `~/.cache/claude-click-overlay` | Log, pid, and calibration files |
 | `CLICK_OVERLAY_DISABLE` | unset | Set to `1` to turn the hook into a no-op |
 
-Set them in the `env` block of your Claude Code settings or in the shell that starts Claude.
+Set them in the `env` block of your Claude Code settings or in the shell that starts Claude:
+
+```json
+{
+  "env": {
+    "CLICK_OVERLAY_SOUND": "Pop",
+    "CLICK_OVERLAY_VOLUME": "0.4"
+  }
+}
+```
+
+## Sounds
+
+`tick` is a synthesized 45 ms click that ships with the tool. Every macOS system sound works
+too: Tink, Pop, Morse, Ping, Glass, Bottle, Frog, Funk, Hero, Purr, Sosumi, Submarine, Blow,
+and Basso. Names are case-insensitive. A path to an `.aiff`, `.wav`, `.caf`, or `.mp3` file
+uses your own sound, and `none` keeps the overlay silent.
+
+Preview them before choosing:
+
+```sh
+overlay/build/click-overlay sounds          # list the options
+overlay/build/click-overlay play tick
+overlay/build/click-overlay play Pop --volume 0.4
+```
 
 ## Markers
 
@@ -104,6 +136,7 @@ Press `Esc` to abort computer use as usual. The overlay fades out on its own.
 ```sh
 python3 tools/test_sizing.py        # screenshot size prediction against measured sizes
 python3 tools/test_calibration.py   # calibration convergence in simulation
+python3 tools/test_hook_args.py     # overlay command line built by the pre hook
 ```
 
 `tools/` also contains the probes used for the measurements in `docs/experiments.md`.
