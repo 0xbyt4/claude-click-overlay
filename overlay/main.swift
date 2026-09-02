@@ -71,7 +71,7 @@ case "play", "render", "use":
         if let scrollSpec = scrollSpec { config["scroll_sound"] = scrollSpec }
         config["volume"] = NSDecimalNumber(string: String(format: "%.2f", volume))
         do { try writeConfig(config) } catch { fail("cannot write config: \(error.localizedDescription)") }
-        print("click=\(config["sound"] ?? "tick") key=\(config["key_sound"] ?? "keyboard") scroll=\(config["scroll_sound"] ?? "none") volume=\(volume) saved to \(configPath())")
+        print("click=\(config["sound"] ?? "mouse") key=\(config["key_sound"] ?? "mechkey") scroll=\(config["scroll_sound"] ?? "none") volume=\(volume) saved to \(configPath())")
     }
 case "show":
     let options = parseShowOptions(Array(arguments.dropFirst()))

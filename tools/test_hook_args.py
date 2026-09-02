@@ -89,7 +89,7 @@ for case in CASES:
         banner = [command[i + 1] for i, token in enumerate(command) if token == "--banner"]
         options = dict(zip(command[2::2], command[3::2]))
         ok = (markers == expected_markers and banner == expected_banner and options.get("--sound") == "Pop"
-              and options.get("--key-sound") == "keyboard" and options.get("--scroll-sound") == "none"
+              and options.get("--key-sound") == "mechkey" and options.get("--scroll-sound") == "none"
               and options.get("--volume") == "0.4" and "--log" in command and options.get("--state-dir") == STATE_DIR)
         print("%s %s -> markers=%s banner=%s" % ("ok  " if ok else "FAIL", hook.action_name(payload["tool_name"]), markers, banner))
     failed |= not ok

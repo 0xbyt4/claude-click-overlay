@@ -37,8 +37,8 @@ struct ShowOptions {
     var markers: [Marker] = []
     var banner: [String] = []
     var ttl: Double = 2.0
-    var sound = "tick"
-    var keySound = "keyboard"
+    var sound = "mouse"
+    var keySound = "mechkey"
     var scrollSound = "none"
     var volume: Float = 0.6
     var logPath: String?

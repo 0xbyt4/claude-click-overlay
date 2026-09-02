@@ -77,8 +77,8 @@ Environment variables read by the hook:
 | `CLICK_OVERLAY_PREVIEW_MS` | `600` | How long the marker is shown before the action runs |
 | `CLICK_OVERLAY_LINGER_MS` | `350` | How long the marker stays after the action finishes |
 | `CLICK_OVERLAY_MAX_TTL_S` | `120` | Safety limit for an overlay that is never dismissed |
-| `CLICK_OVERLAY_SOUND` | `tick` | Click sound, see [Sounds](#sounds) |
-| `CLICK_OVERLAY_KEY_SOUND` | `keyboard` | Sound per keystroke while Claude types |
+| `CLICK_OVERLAY_SOUND` | `mouse` | Click sound, see [Sounds](#sounds) |
+| `CLICK_OVERLAY_KEY_SOUND` | `mechkey` | Sound per keystroke while Claude types |
 | `CLICK_OVERLAY_SCROLL_SOUND` | `none` | Sound per scroll gesture |
 | `CLICK_OVERLAY_VOLUME` | `0.6` | Sound volume from `0` to `1` |
 | `CLICK_OVERLAY_BIN` | `overlay/build/click-overlay` | Overlay binary location |
@@ -107,14 +107,15 @@ without restarting Claude Code:
 overlay/build/click-overlay sounds                 # list everything
 overlay/build/click-overlay play fart              # preview one
 overlay/build/click-overlay use fart --volume 0.5  # make it the click sound
-overlay/build/click-overlay use --clear            # back to the default tick
+overlay/build/click-overlay use --clear            # back to the defaults
 ```
 
 | Spec | What you hear |
 | :-- | :-- |
-| `tick` | short neutral click, the default |
-| `bubble`, `blip`, `beep`, `ding`, `woodblock` | soft UI-style clicks and a small bell |
-| `typewriter`, `keyboard`, `shutter` | typewriter key, mechanical switch, camera shutter |
+| `mouse` | old mechanical mouse microswitch, press and release, the default for clicks |
+| `mechkey` | old clicky mechanical keyboard with bottom-out thock, the default for typing |
+| `tick`, `bubble`, `blip`, `beep`, `ding`, `woodblock` | soft UI-style clicks and a small bell |
+| `typewriter`, `keyboard`, `shutter` | typewriter key, soft key switch, camera shutter |
 | `drum`, `rimshot` | kick drum, ba-dum-tss |
 | `pew`, `jump`, `coin`, `powerup`, `robot` | chiptune laser, jump, coin, rising arpeggio, beep-boop |
 | `boing`, `boom`, `airhorn`, `fart`, `trombone`, `quack` | spring, bass drop, air horn, the classic, sad trombone, duck |
@@ -126,8 +127,10 @@ overlay/build/click-overlay use --clear            # back to the default tick
 | `say:nice` | speaks the text with the system voice |
 | `none` | silent |
 
-Clicks, keystrokes, and scrolling each have their own sound. Defaults: `tick` for clicks,
-`keyboard` for keystrokes, `none` for scrolling.
+Clicks, keystrokes, and scrolling each have their own sound. Defaults: `mouse` for clicks,
+`mechkey` for keystrokes, `none` for scrolling. Both defaults come in several variants with
+small pitch and timing differences, picked at random per event so fast typing does not sound
+like one sample on repeat.
 
 ```sh
 overlay/build/click-overlay use coin --key typewriter --scroll bubble

@@ -51,11 +51,32 @@ func midiFrequency(_ note: Int) -> Double {
 final class Renderer {
     private(set) var samples: [Double]
     let count: Int
-    private var noise = NoiseSource()
+    private var noise: NoiseSource
 
-    init(duration: Double) {
+    init(duration: Double, seed: Int = 0) {
         count = max(1, Int(sampleRate * duration))
         samples = [Double](repeating: 0, count: count)
+        noise = NoiseSource(state: 0x9E37_79B9 &+ UInt32(truncatingIfNeeded: seed &* 7_919))
+    }
+
+    /// Adds another renderer's samples at an offset, for layers that need their own filtering.
+    func mix(_ other: Renderer, at start: Double = 0, gain: Double = 1) {
+        let first = Int(start * sampleRate)
+        for index in 0..<other.count {
+            let position = first + index
+            if position >= count { break }
+            samples[position] += other.samples[index] * gain
+        }
+    }
+
+    func highpass(cutoff: Double) {
+        let dt = 1 / sampleRate
+        let alpha = dt / (1 / (2 * .pi * cutoff) + dt)
+        var low = 0.0
+        for index in 0..<count {
+            low += alpha * (samples[index] - low)
+            samples[index] -= low
+        }
     }
 
     /// Adds a tone whose frequency and amplitude are functions of the time since the tone began.
@@ -147,21 +168,81 @@ struct Preset {
     let name: String
     let summary: String
     let peak: Double
-    let build: () -> Renderer
+    let variants: Int
+    let build: (Int) -> Renderer
 
     init(name: String, summary: String, peak: Double = 0.85, build: @escaping () -> Renderer) {
+        self.init(name: name, summary: summary, peak: peak, variants: 1, build: { _ in build() })
+    }
+
+    /// A preset with several variants: the player picks one at random per event, which keeps
+    /// rapid repeats from sounding like a single sample on a loop.
+    init(name: String, summary: String, peak: Double = 0.85, variants: Int, build: @escaping (Int) -> Renderer) {
         self.name = name
         self.summary = summary
         self.peak = peak
+        self.variants = max(1, variants)
         self.build = build
     }
 
-    func wavData() -> Data { build().wavData(peak: peak) }
-    func buffer() -> AVAudioPCMBuffer { build().pcmBuffer(peak: peak) }
+    func wavData() -> Data { build(0).wavData(peak: peak) }
+    func buffers() -> [AVAudioPCMBuffer] { (0..<variants).map { build($0).pcmBuffer(peak: peak) } }
 }
 
 let presets: [Preset] = [
-    Preset(name: "tick", summary: "short neutral click, the default", peak: 0.8) {
+    Preset(name: "mouse", summary: "old mechanical mouse microswitch, the default for clicks", peak: 0.8, variants: 4) { variant in
+        let j = Double(variant)
+        let pitch = 1 + 0.04 * sin(j * 1.7)
+        let release = 0.072 + 0.01 * sin(j * 2.3)
+        let r = Renderer(duration: release + 0.07, seed: 11 + variant)
+        func snap(at start: Double, level: Double, tone: Double) {
+            // Metal leaf spring snapping: a broadband tick with bright metallic ringing.
+            let tick = Renderer(duration: 0.004, seed: 17 + variant)
+            tick.tone(.noise, duration: 0.004, frequency: constant(0), amplitude: { t in exp(-t * 2_200) })
+            tick.highpass(cutoff: 2_500)
+            r.mix(tick, at: start, gain: level * 0.9)
+            r.tone(.sine, at: start, duration: 0.02, frequency: constant(4_200 * tone * pitch), amplitude: { t in level * 0.9 * exp(-t * 900) })
+            r.tone(.sine, at: start, duration: 0.015, frequency: constant(6_300 * tone * pitch), amplitude: { t in level * 0.4 * exp(-t * 1_200) })
+            // Plastic shell resonance and the finger's thud.
+            r.tone(.sine, at: start, duration: 0.03, frequency: constant(950 * pitch), amplitude: { t in level * 0.5 * exp(-t * 250) })
+            r.tone(.sine, at: start, duration: 0.03, frequency: constant(1_400 * pitch), amplitude: { t in level * 0.25 * exp(-t * 300) })
+            r.tone(.sine, at: start, duration: 0.05, frequency: constant(180), amplitude: { t in level * 0.35 * exp(-t * 120) })
+        }
+        snap(at: 0, level: 1, tone: 1)
+        snap(at: release, level: 0.6, tone: 1.1)
+        return r
+    },
+    Preset(name: "mechkey", summary: "old clicky mechanical keyboard, the default for typing", peak: 0.85, variants: 6) { variant in
+        let j = Double(variant)
+        let pitch = 1 + 0.05 * sin(j * 1.9)
+        let thock = 1 + 0.08 * cos(j * 1.3)
+        let release = 0.065 + 0.015 * sin(j * 2.7)
+        let r = Renderer(duration: release + 0.09, seed: 101 + variant)
+        // Click jacket snapping past the slider: a sharp bright tick.
+        let click = Renderer(duration: 0.003, seed: 131 + variant)
+        click.tone(.noise, duration: 0.003, frequency: constant(0), amplitude: { t in exp(-t * 2_000) })
+        click.highpass(cutoff: 1_800)
+        r.mix(click, at: 0, gain: 0.9)
+        r.tone(.sine, duration: 0.025, frequency: constant(2_600 * pitch), amplitude: { t in 0.8 * exp(-t * 600) })
+        r.tone(.sine, duration: 0.02, frequency: constant(3_900 * pitch), amplitude: { t in 0.5 * exp(-t * 800) })
+        // Bottom-out: the keycap hitting the plate, a low thock through the case.
+        let thud = Renderer(duration: 0.03, seed: 151 + variant)
+        thud.tone(.noise, duration: 0.03, frequency: constant(0), amplitude: { t in exp(-t * 250) })
+        thud.lowpass(cutoff: 420)
+        r.mix(thud, at: 0.006, gain: 0.9)
+        r.tone(.sine, at: 0.006, duration: 0.08, frequency: constant(220 * thock), amplitude: { t in 0.9 * exp(-t * 90) })
+        r.tone(.sine, at: 0.006, duration: 0.06, frequency: constant(380 * thock), amplitude: { t in 0.5 * exp(-t * 110) })
+        r.tone(.sine, at: 0.006, duration: 0.05, frequency: constant(700 * pitch), amplitude: { t in 0.3 * exp(-t * 150) })
+        // Release: the slider returning, a lighter clack.
+        let clack = Renderer(duration: 0.002, seed: 171 + variant)
+        clack.tone(.noise, duration: 0.002, frequency: constant(0), amplitude: { t in exp(-t * 2_500) })
+        clack.highpass(cutoff: 2_000)
+        r.mix(clack, at: release, gain: 0.5)
+        r.tone(.sine, at: release, duration: 0.02, frequency: constant(3_100 * pitch), amplitude: { t in 0.5 * exp(-t * 700) })
+        r.tone(.sine, at: release, duration: 0.05, frequency: constant(260 * thock), amplitude: { t in 0.35 * exp(-t * 120) })
+        return r
+    },
+    Preset(name: "tick", summary: "short neutral click", peak: 0.8) {
         let r = Renderer(duration: 0.045)
         r.tone(.sine, duration: 0.045, frequency: constant(1_800), amplitude: { t in 0.7 * exp(-t * 90) })
         r.tone(.sine, duration: 0.045, frequency: constant(3_600), amplitude: { t in 0.2 * exp(-t * 90) })
@@ -204,7 +285,7 @@ let presets: [Preset] = [
         r.tone(.sine, at: 0.006, duration: 0.06, frequency: constant(160), amplitude: { t in 0.8 * exp(-t * 80) })
         return r
     },
-    Preset(name: "keyboard", summary: "mechanical key switch") {
+    Preset(name: "keyboard", summary: "soft key switch") {
         let r = Renderer(duration: 0.1)
         r.tone(.noise, duration: 0.012, frequency: constant(0), amplitude: decay(700))
         r.tone(.sine, duration: 0.012, frequency: constant(3_200), amplitude: { t in 0.6 * exp(-t * 600) })
@@ -362,16 +443,16 @@ func systemSoundNames() -> [String] {
 }
 
 /// Resolves a single sound name: a preset, a macOS system sound (case-insensitive), or a file path.
-func loadSingleBuffer(_ name: String) -> AVAudioPCMBuffer? {
+func loadBuffers(_ name: String) -> [AVAudioPCMBuffer]? {
     let key = name.lowercased()
     if let preset = presets.first(where: { $0.name == key }) {
-        return preset.buffer()
+        return preset.buffers()
     }
     if name.contains("/") {
-        return fileBuffer((name as NSString).expandingTildeInPath)
+        return fileBuffer((name as NSString).expandingTildeInPath).map { [$0] }
     }
     if let match = systemSoundNames().first(where: { $0.lowercased() == key }) {
-        return fileBuffer("\(systemSoundsDirectory)/\(match).aiff")
+        return fileBuffer("\(systemSoundsDirectory)/\(match).aiff").map { [$0] }
     }
     return nil
 }
@@ -451,8 +532,8 @@ final class Mixer {
 final class SoundPlayer: NSObject {
     private enum Mode {
         case silent
-        case single(String, AVAudioPCMBuffer)
-        case random([(String, AVAudioPCMBuffer)])
+        case single(String, [AVAudioPCMBuffer])
+        case random([(String, [AVAudioPCMBuffer])])
         case melody(String, [Int])
         case speech(String)
     }
@@ -475,9 +556,9 @@ final class SoundPlayer: NSObject {
             mode = .silent
         } else if lowered == "random" || lowered.hasPrefix("random:") {
             let names = lowered == "random" ? presets.map { $0.name } : spec.dropFirst("random:".count).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-            var choices: [(String, AVAudioPCMBuffer)] = []
+            var choices: [(String, [AVAudioPCMBuffer])] = []
             for name in names {
-                if let buffer = loadSingleBuffer(name) { choices.append((name, buffer)) } else { problem = "unknown sound in random list: \(name)" }
+                if let buffers = loadBuffers(name) { choices.append((name, buffers)) } else { problem = "unknown sound in random list: \(name)" }
             }
             mode = choices.isEmpty ? .silent : .random(choices)
         } else if lowered.hasPrefix("melody:") {
@@ -490,8 +571,8 @@ final class SoundPlayer: NSObject {
         } else if lowered.hasPrefix("say:") {
             let text = String(spec.dropFirst("say:".count)).trimmingCharacters(in: .whitespaces)
             mode = text.isEmpty ? .silent : .speech(text)
-        } else if let buffer = loadSingleBuffer(spec) {
-            mode = .single(spec, buffer)
+        } else if let buffers = loadBuffers(spec) {
+            mode = .single(spec, buffers)
         } else {
             problem = "unknown sound: \(spec)"
         }
@@ -504,8 +585,8 @@ final class SoundPlayer: NSObject {
     /// Prepares the mixer pools so the first event plays without engine start-up latency.
     private func warmUp() {
         switch mode {
-        case let .single(_, buffer): Mixer.shared.prepare(format: buffer.format)
-        case let .random(choices): for choice in choices { Mixer.shared.prepare(format: choice.1.format) }
+        case let .single(_, buffers): for buffer in buffers { Mixer.shared.prepare(format: buffer.format) }
+        case let .random(choices): for choice in choices { for buffer in choice.1 { Mixer.shared.prepare(format: buffer.format) } }
         case let .melody(_, notes):
             Mixer.shared.prepare(format: Mixer.monoFormat)
             for note in Set(notes) where note > 0 { noteCache[note] = noteRenderer(note).pcmBuffer(peak: 0.6) }
@@ -546,12 +627,12 @@ final class SoundPlayer: NSObject {
         switch mode {
         case .silent:
             return "none"
-        case let .single(name, buffer):
-            Mixer.shared.play(buffer, volume: volume)
+        case let .single(name, buffers):
+            Mixer.shared.play(buffers.randomElement()!, volume: volume)
             return name
         case let .random(choices):
             let choice = choices.randomElement()!
-            Mixer.shared.play(choice.1, volume: volume)
+            Mixer.shared.play(choice.1.randomElement()!, volume: volume)
             return "random:\(choice.0)"
         case let .melody(name, notes):
             let position = loadPosition() % notes.count

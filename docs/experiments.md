@@ -174,3 +174,22 @@ still counted and flashes the banner.
 | 100 ASCII characters, key sound on | 59 events | 101 of 101 (with a leading newline) |
 | 100 Turkish letters, key sound on | 69 events | 101 of 101 |
 | 849-character note in four `type` actions plus cmd+n | not run | 850 of 850, 91 keys/s, 237 sounds played |
+
+## 10. Mechanical mouse and keyboard defaults
+
+The default click and key sounds imitate an old mechanical mouse microswitch and an old clicky
+mechanical keyboard. Both are layered: a broadband high-passed tick for the metal snap, short
+bright ringing, a lower body resonance, and a second, lighter hit for the release. The keyboard
+adds a low-passed noise thud with 220 and 380 Hz tones for the keycap bottoming out. Each has
+several variants (4 for the mouse, 6 for the keyboard) with pitch and release-timing offsets,
+chosen at random per event.
+
+Envelope of variant 0, RMS per 5 ms window with the dominant frequency estimate:
+
+| Preset | 0 ms | 5 to 30 ms | Release |
+| :-- | :-- | :-- | :-- |
+| mouse | 0.19 RMS, bright (ringing at 4.2 and 6.3 kHz) | fades within 10 ms | 70 ms, 0.11 RMS |
+| mechkey | 0.14 RMS, bright (2.6 and 3.9 kHz) | 0.28 falling to 0.03 RMS at 200 to 300 Hz | 65 ms, 0.12 RMS |
+
+Whether they feel like the real thing is for ears to judge; the structure, two distinct hits
+with a bright snap and a low body, matches recordings of such switches in shape and timing.

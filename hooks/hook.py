@@ -57,8 +57,8 @@ def sound_settings():
         return str(value).strip() or "none"
 
     return {
-        "sound": pick("sound", "CLICK_OVERLAY_SOUND", "tick"),
-        "key_sound": pick("key_sound", "CLICK_OVERLAY_KEY_SOUND", "keyboard"),
+        "sound": pick("sound", "CLICK_OVERLAY_SOUND", "mouse"),
+        "key_sound": pick("key_sound", "CLICK_OVERLAY_KEY_SOUND", "mechkey"),
         "scroll_sound": pick("scroll_sound", "CLICK_OVERLAY_SCROLL_SOUND", "none"),
         "volume": pick("volume", "CLICK_OVERLAY_VOLUME", "0.6"),
     }
