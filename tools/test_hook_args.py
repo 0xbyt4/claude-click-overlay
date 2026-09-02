@@ -12,6 +12,7 @@ os.environ["CLICK_OVERLAY_CONFIG"] = os.path.join(STATE_DIR, "config.json")
 os.environ["CLICK_OVERLAY_SOUND"] = "Pop"
 os.environ["CLICK_OVERLAY_VOLUME"] = "0.4"
 os.environ["CLICK_OVERLAY_PREVIEW_MS"] = "0"
+os.environ["CLICK_OVERLAY_READY_TIMEOUT_MS"] = "0"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks"))
 import hook  # noqa: E402
 
@@ -21,6 +22,10 @@ launched = []
 
 class FakeProcess:
     pid = 4242
+    returncode = None
+
+    def poll(self):
+        return None
 
 
 def fake_run_overlay(args, timeout=2.0):

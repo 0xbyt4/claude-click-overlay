@@ -9,10 +9,12 @@ import Foundation
 //
 // Subcommands:
 //   show [--ttl SECONDS] [--sound SPEC] [--key-sound SPEC] [--scroll-sound SPEC] [--volume 0..1]
-//        [--log FILE] [--state-dir DIR] [--banner TEXT ...] [--marker X,Y,LABEL,KIND ...]
+//        [--log FILE] [--state-dir DIR] [--ready-file FILE] [--banner TEXT ...] [--marker X,Y,LABEL,KIND ...]
 //        X,Y are logical points with a top-left origin (CGWindowList convention).
 //        KIND is one of: click, scroll, move, drag-start, drag-end.
 //        A banner line is shown at the top of the screen, used for upcoming keyboard input.
+//        The ready file is created once the markers are visible and the event monitors are
+//        installed; the hook waits for it before letting the action proceed.
 //        Exits after TTL seconds or on SIGTERM/SIGINT (fades out first).
 //   sounds            Lists the sound presets, system sounds, melodies, and modes.
 //   play SPEC [--volume 0..1]
@@ -43,6 +45,7 @@ struct ShowOptions {
     var volume: Float = 0.6
     var logPath: String?
     var stateDirectory: String?
+    var readyFile: String?
 }
 
 func fail(_ message: String) -> Never {
@@ -92,6 +95,8 @@ func parseShowOptions(_ args: [String]) -> ShowOptions {
             options.logPath = value(for: "--log")
         case "--state-dir":
             options.stateDirectory = value(for: "--state-dir")
+        case "--ready-file":
+            options.readyFile = value(for: "--ready-file")
         case "--marker":
             let raw = value(for: "--marker")
             let parts = raw.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
@@ -282,9 +287,9 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
     let options: ShowOptions
     var window: NSWindow!
     var view: MarkerView!
-    var clickPlayer: SoundPlayer!
-    var keyPlayer: SoundPlayer!
-    var scrollPlayer: SoundPlayer!
+    var clickPlayer: SoundPlayer?
+    var keyPlayer: SoundPlayer?
+    var scrollPlayer: SoundPlayer?
     var startedAt = Date()
     var fadingOut = false
     var signalSources: [DispatchSourceSignal] = []
@@ -332,12 +337,8 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
         window.contentView = view
         window.orderFrontRegardless()
 
-        clickPlayer = SoundPlayer(spec: options.sound, volume: options.volume, stateDirectory: options.stateDirectory)
-        keyPlayer = SoundPlayer(spec: options.keySound, volume: options.volume, stateDirectory: options.stateDirectory)
-        scrollPlayer = SoundPlayer(spec: options.scrollSound, volume: options.volume, stateDirectory: options.stateDirectory)
-        for (label, player) in [("click", clickPlayer!), ("key", keyPlayer!), ("scroll", scrollPlayer!)] {
-            if let problem = player.problem { log("\(label) sound problem: \(problem), staying silent") }
-        }
+        // Order matters: markers and monitors first, audio afterwards. A cold audio engine can take
+        // seconds to start and the click must not land before the monitors exist.
         log("shown markers=\(options.markers.count) banner=\(options.banner.count) sound=\(options.sound) key=\(options.keySound) scroll=\(options.scrollSound) accessibilityTrusted=\(AXIsProcessTrusted())")
 
         // Synthetic events posted by computer use reach global monitors like real ones, so these
@@ -345,7 +346,7 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown], handler: { [self] event in
             let location = NSEvent.mouseLocation
             view.press(at: location)
-            let played = clickPlayer.play()
+            let played = clickPlayer?.play() ?? "audio-not-ready"
             log("mouse-down type=\(event.type.rawValue) at=(\(Int(location.x)),\(Int(screen.frame.height - location.y))) sound=\(played)")
         }) { monitors.append(monitor) } else { log("global mouse monitor unavailable") }
 
@@ -359,7 +360,7 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
             var played = "throttled"
             if now.timeIntervalSince(lastKeySound) >= 0.03 {
                 lastKeySound = now
-                played = keyPlayer.play()
+                played = keyPlayer?.play() ?? "audio-not-ready"
             }
             let characters = event.characters ?? ""
             log("key-down keyCode=\(event.keyCode) chars=\(characters.count) count=\(view.keystrokes) sound=\(played)")
@@ -370,17 +371,40 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
             var played = "throttled"
             if Date().timeIntervalSince(lastScrollSound) > 0.12 {
                 lastScrollSound = Date()
-                played = scrollPlayer.play()
+                played = scrollPlayer?.play() ?? "audio-not-ready"
             }
             log("scroll dy=\(Int(event.scrollingDeltaY)) dx=\(Int(event.scrollingDeltaX)) sound=\(played)")
         }) { monitors.append(monitor) } else { log("global scroll monitor unavailable") }
+
+        if let readyFile = options.readyFile {
+            FileManager.default.createFile(atPath: readyFile, contents: Data())
+        }
+
+        let audioStart = Date()
+        let options = self.options
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let click = SoundPlayer(spec: options.sound, volume: options.volume, stateDirectory: options.stateDirectory)
+            let key = SoundPlayer(spec: options.keySound, volume: options.volume, stateDirectory: options.stateDirectory)
+            let scroll = SoundPlayer(spec: options.scrollSound, volume: options.volume, stateDirectory: options.stateDirectory)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.clickPlayer = click
+                self.keyPlayer = key
+                self.scrollPlayer = scroll
+                for (label, player) in [("click", click), ("key", key), ("scroll", scroll)] {
+                    if let problem = player.problem { self.log("\(label) sound problem: \(problem), staying silent") }
+                }
+                self.log("audio ready in \(Int(Date().timeIntervalSince(audioStart) * 1000)) ms")
+            }
+        }
 
         Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [self] _ in
             let elapsed = Date().timeIntervalSince(startedAt)
             view.phase = CGFloat(elapsed.truncatingRemainder(dividingBy: 1.0))
             if fadingOut || elapsed > options.ttl - 0.3 {
                 view.alphaScale = max(0, view.alphaScale - 0.12)
-                if view.alphaScale <= 0 && !clickPlayer.isPlaying && !keyPlayer.isPlaying && !scrollPlayer.isPlaying { finish() }
+                let playing = [clickPlayer, keyPlayer, scrollPlayer].contains { $0?.isPlaying ?? false }
+                if view.alphaScale <= 0 && !playing { finish() }
             }
             view.needsDisplay = true
         }

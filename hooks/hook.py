@@ -31,6 +31,10 @@ OVERLAY_BIN = os.environ.get("CLICK_OVERLAY_BIN") or os.path.join(REPO_DIR, "ove
 PREVIEW_SECONDS = float(os.environ.get("CLICK_OVERLAY_PREVIEW_MS", "600")) / 1000.0
 MAX_TTL_SECONDS = float(os.environ.get("CLICK_OVERLAY_MAX_TTL_S", "120"))
 LINGER_SECONDS = float(os.environ.get("CLICK_OVERLAY_LINGER_MS", "350")) / 1000.0
+# How long to wait for the overlay to report that its markers are on screen and its event
+# monitors are installed. A cold start can take seconds; the preview delay starts after that.
+READY_TIMEOUT_SECONDS = float(os.environ.get("CLICK_OVERLAY_READY_TIMEOUT_MS", "3000")) / 1000.0
+READY_FILE = os.path.join(STATE_DIR, "overlay.ready")
 OVERLAY_LOG_FILE = os.path.join(STATE_DIR, "overlay.log")
 # Sound choice written by `click-overlay use NAME`. The config file wins over the environment so
 # a choice made while Claude is running takes effect on the next action without a restart.
@@ -262,19 +266,38 @@ def pre(payload):
         os.replace(OVERLAY_LOG_FILE, OVERLAY_LOG_FILE + ".1")
     settings = sound_settings()
     sound = settings["sound"]
+    os.makedirs(STATE_DIR, exist_ok=True)
+    try:
+        os.remove(READY_FILE)
+    except OSError:
+        pass
+    started = time.time()
     process = subprocess.Popen(
         [OVERLAY_BIN, "show", "--ttl", str(MAX_TTL_SECONDS), "--sound", sound, "--key-sound", settings["key_sound"],
-         "--scroll-sound", settings["scroll_sound"], "--volume", settings["volume"], "--log", OVERLAY_LOG_FILE, "--state-dir", STATE_DIR] + args,
+         "--scroll-sound", settings["scroll_sound"], "--volume", settings["volume"], "--log", OVERLAY_LOG_FILE,
+         "--state-dir", STATE_DIR, "--ready-file", READY_FILE] + args,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    os.makedirs(STATE_DIR, exist_ok=True)
     with open(PID_FILE, "w", encoding="utf-8") as handle:
         handle.write(str(process.pid))
-    log("pre %s overlay=%s image=%dx%d(%s) sound=%s/%s/%s pid=%d" % (action_name(tool_name), args[1::2], width, height, source, sound, settings["key_sound"], settings["scroll_sound"], process.pid))
+    ready = wait_until_ready(process, started)
+    log("pre %s overlay=%s image=%dx%d(%s) sound=%s/%s/%s pid=%d ready=%s" % (action_name(tool_name), args[1::2], width, height, source, sound, settings["key_sound"], settings["scroll_sound"], process.pid, ready))
     time.sleep(PREVIEW_SECONDS)
+
+
+def wait_until_ready(process, started):
+    """Block until the overlay signals readiness, its process dies, or the timeout passes."""
+    deadline = started + READY_TIMEOUT_SECONDS
+    while time.time() < deadline:
+        if os.path.exists(READY_FILE):
+            return "%d ms" % int((time.time() - started) * 1000)
+        if process.poll() is not None:
+            return "overlay exited with %s" % process.returncode
+        time.sleep(0.01)
+    return "timeout after %d ms" % int((time.time() - started) * 1000)
 
 
 def consistent(size, samples, screen):

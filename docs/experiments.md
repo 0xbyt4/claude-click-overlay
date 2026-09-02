@@ -193,3 +193,26 @@ Envelope of variant 0, RMS per 5 ms window with the dominant frequency estimate:
 
 Whether they feel like the real thing is for ears to judge; the structure, two distinct hits
 with a bright snap and a low body, matches recordings of such switches in shape and timing.
+
+## 11. Cold start and the readiness handshake
+
+Navigating System Settings, the first click of the sequence drew its marker but the overlay
+recorded no mouse-down, while the next four actions were complete. The hook log showed the
+pre hook at second 01 and the overlay's `shown` line at 04.2: that overlay instance took
+about 3 seconds to start, against 170 to 225 ms for the instances measured right after. The
+600 ms preview had long expired, so the click happened before the markers were visible and
+before the monitors existed. The slow part is the audio engine, which can take seconds to
+start when the output device has gone idle.
+
+Two changes. The overlay now shows the markers and installs the monitors first, signals
+readiness by creating a file, and only then builds the sound players on a background thread;
+an event that arrives before audio is ready is still counted and animated, just silent. The
+hook waits for the ready file, capped at 3 seconds by `CLICK_OVERLAY_READY_TIMEOUT_MS`, and
+starts the preview delay after it, so the marker is on screen for the full preview before the
+action runs and a stuck overlay can never hold up computer use for more than the cap.
+
+| Measurement | Value |
+| :-- | :-- |
+| Spawn to ready (monitors installed), warm | 112 ms |
+| Audio ready after that | 93 to 97 ms |
+| Live click after the change | mouse-down captured 796 ms after `shown`, with sound |

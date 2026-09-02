@@ -26,7 +26,8 @@ It is implemented entirely with Claude Code hooks, so:
 1. A `PreToolUse` hook matches the computer-use click, scroll, drag, type, key, and batch
    tools. It reads coordinates and text from the tool input, converts coordinates from
    screenshot pixels to screen points, launches the overlay with markers and a banner, waits
-   for the preview delay, and exits so the action proceeds.
+   until the overlay reports that the markers are on screen and its event monitors are
+   installed, waits the preview delay, and exits so the action proceeds.
 2. The overlay watches for mouse-down, key-down, and scroll events with global monitors.
    Synthetic events posted by computer use reach them like real ones, so sounds and animations
    fire at the exact moment each click, keystroke, or scroll lands, one per event even inside a
@@ -76,6 +77,7 @@ Environment variables read by the hook:
 | :-- | :-- | :-- |
 | `CLICK_OVERLAY_PREVIEW_MS` | `600` | How long the marker is shown before the action runs |
 | `CLICK_OVERLAY_LINGER_MS` | `350` | How long the marker stays after the action finishes |
+| `CLICK_OVERLAY_READY_TIMEOUT_MS` | `3000` | Longest wait for the overlay to come up before the action runs anyway |
 | `CLICK_OVERLAY_MAX_TTL_S` | `120` | Safety limit for an overlay that is never dismissed |
 | `CLICK_OVERLAY_SOUND` | `mouse` | Click sound, see [Sounds](#sounds) |
 | `CLICK_OVERLAY_KEY_SOUND` | `mechkey` | Sound per keystroke while Claude types |
