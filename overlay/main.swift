@@ -86,7 +86,7 @@ case "play", "render", "use":
         for (key, value) in extras { config[key] = value }
         config["volume"] = NSDecimalNumber(string: String(format: "%.2f", volume))
         do { try writeConfig(config) } catch { fail("cannot write config: \(error.localizedDescription)") }
-        let typing = (config["typing"] as? String) ?? "fast"
+        let typing = (config["typing"] as? String) ?? "asmr"
         let keyDefault = typing == "asmr" ? "mechkey" : "none"
         print("click=\(config["sound"] ?? "mouse") key=\(config["key_sound"] ?? keyDefault) scroll=\(config["scroll_sound"] ?? "none") typing=\(typing) banner=\(config["typing_banner"] ?? "off") volume=\(volume) saved to \(configPath())")
     }

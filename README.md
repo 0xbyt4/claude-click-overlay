@@ -14,9 +14,9 @@ that advance one note per click, spoken words, your own audio file, or silence.
 
 It is implemented entirely with Claude Code hooks, so:
 
-- **Zero extra tokens.** The hooks print nothing to stdout. Nothing reaches the model's context.
-  Verified by inspecting the session transcript: the tool result stays exactly `Clicked.` The
-  one exception is the opt-in asmr typing mode, which adds a short note per `type` call.
+- **Almost zero extra tokens.** The hooks print nothing for clicks, scrolls, and drags, so
+  nothing reaches the model's context; the tool result stays exactly `Clicked.` The default
+  human-paced typing mode adds one short note per `type` call, and `fast` mode removes even that.
 - **No new MCP server.** The model does not know the overlay exists and cannot forget to use it.
 - **Never blocks computer use.** Every failure path logs and exits 0.
 - **Invisible to Claude.** The overlay is not in the computer-use allowlist, so it is excluded
@@ -81,8 +81,8 @@ Environment variables read by the hook:
 | `CLICK_OVERLAY_READY_TIMEOUT_MS` | `3000` | Longest wait for the overlay to come up before the action runs anyway |
 | `CLICK_OVERLAY_MAX_TTL_S` | `120` | Safety limit for an overlay that is never dismissed |
 | `CLICK_OVERLAY_SOUND` | `mouse` | Click sound, see [Sounds](#sounds) |
-| `CLICK_OVERLAY_KEY_SOUND` | `none` (`mechkey` in asmr mode) | Sound per keystroke while Claude types |
-| `CLICK_OVERLAY_TYPING` | `fast` | `fast` or `asmr`, see [Typing modes](#typing-modes) |
+| `CLICK_OVERLAY_KEY_SOUND` | `mechkey` (`none` in fast mode) | Sound per keystroke while Claude types |
+| `CLICK_OVERLAY_TYPING` | `asmr` | `asmr` or `fast`, see [Typing modes](#typing-modes) |
 | `CLICK_OVERLAY_TYPING_BANNER` | `off` | `on` shows the upcoming text or key in a banner |
 | `CLICK_OVERLAY_ASMR_CPS` | `10` | Characters per second in asmr mode |
 | `CLICK_OVERLAY_ASMR_MAX_SECONDS` | `60` | Time budget per `type` call in asmr mode |
@@ -135,29 +135,29 @@ overlay/build/click-overlay use --clear            # back to the defaults
 | `none` | silent |
 
 Clicks, keystrokes, and scrolling each have their own sound. Defaults: `mouse` for clicks,
-`none` for keystrokes, `none` for scrolling. `mouse` and `mechkey` come in several variants
-with small pitch and timing differences, picked at random per event.
+`mechkey` for keystrokes (typed at human pace, see below), `none` for scrolling. `mouse` and
+`mechkey` come in several variants with small pitch and timing differences, picked at random
+per event.
 
 ```sh
 overlay/build/click-overlay use coin --scroll bubble
-overlay/build/click-overlay use --key keyboard       # a sound per keystroke, even in fast mode
+overlay/build/click-overlay use --key typewriter     # a different keystroke sound
 ```
 
 ## Typing modes
 
-Computer use types at roughly 100 keystrokes per second. No key sound survives that, so in the
-default `fast` mode typing is silent and nothing is drawn for it.
-
-`asmr` mode makes Claude type like a person. The pre hook lets the CLI type only the first
-character of a `type` call, which is the CLI's own check that the frontmost app accepts
+By default Claude types like a person: `asmr` mode. The pre hook lets the CLI type only the
+first character of a `type` call, which is the CLI's own check that the frontmost app accepts
 typing, and the post hook then types the rest at about 10 characters per second with natural
 jitter, pauses after punctuation, and the mechanical keyboard sound on every keystroke.
 Press `Esc` to abort the paced typing.
 
+`fast` mode leaves typing to the CLI, which types at roughly 100 keystrokes per second. No key
+sound survives that, so fast typing is silent and nothing is drawn for it.
+
 ```sh
-overlay/build/click-overlay use --typing asmr        # human pace, mechkey sound
+overlay/build/click-overlay use --typing fast        # instant, silent typing
 overlay/build/click-overlay use --typing asmr --cps 14
-overlay/build/click-overlay use --typing fast        # back to instant, silent typing
 overlay/build/click-overlay use --banner on          # show the upcoming text in a banner
 ```
 

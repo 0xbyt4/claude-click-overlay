@@ -41,6 +41,8 @@ def fake_popen(command, **kwargs):
 hook.run_overlay = fake_run_overlay
 hook.subprocess.Popen = fake_popen
 hook.OVERLAY_BIN = __file__  # any existing path satisfies the existence check
+with open(os.environ["CLICK_OVERLAY_CONFIG"], "w", encoding="utf-8") as handle:
+    json.dump({"typing": "fast"}, handle)
 
 CASES = [
     (
@@ -118,7 +120,7 @@ def write_config(config):
 
 
 # The config file written by `click-overlay use` must win over the environment.
-write_config({"sound": "melody:tetris", "key_sound": "typewriter", "scroll_sound": "bubble", "volume": 0.5})
+write_config({"typing": "fast", "sound": "melody:tetris", "key_sound": "typewriter", "scroll_sound": "bubble", "volume": 0.5})
 command, _ = run_pre(CASES[0][0])
 options = dict(zip(command[2::2], command[3::2]))
 ok = options.get("--sound") == "melody:tetris" and options.get("--key-sound") == "typewriter" and options.get("--scroll-sound") == "bubble" and options.get("--volume") == "0.5"
@@ -126,7 +128,7 @@ print("%s config file overrides environment -> sound=%s key=%s scroll=%s volume=
 failed |= not ok
 
 # Banner on: keyboard actions get banner lines and share the numbering.
-write_config({"typing_banner": "on"})
+write_config({"typing": "fast", "typing_banner": "on"})
 command, _ = run_pre(CASES[4][0])
 banner = [command[i + 1] for i, token in enumerate(command) if token == "--banner"]
 markers = [command[i + 1] for i, token in enumerate(command) if token == "--marker"]
@@ -135,14 +137,18 @@ print("%s banner on -> markers=%s banner=%s" % ("ok  " if ok else "FAIL", marker
 failed |= not ok
 
 # Fast mode with an explicit key sound still launches a headless overlay for a standalone type.
-write_config({"key_sound": "keyboard"})
+write_config({"typing": "fast", "key_sound": "keyboard"})
 command, printed = run_pre({"tool_name": "mcp__computer-use__type", "tool_input": {"text": "hello"}})
 ok = command is not None and "--marker" not in command and "--banner" not in command and dict(zip(command[2::2], command[3::2])).get("--key-sound") == "keyboard" and printed is None
 print("%s fast mode with key sound -> headless overlay, no output" % ("ok  " if ok else "FAIL"))
 failed |= not ok
 
-# ASMR mode: a standalone type is cut to its first character and the rest is stashed for the post hook.
-write_config({"typing": "asmr"})
+# Default mode is asmr: with no config at all, a standalone type is cut to its first character
+# and the rest is stashed for the post hook.
+os.remove(os.environ["CLICK_OVERLAY_CONFIG"])
+ok = hook.sound_settings()["typing"] == "asmr" and hook.sound_settings()["key_sound"] == "mechkey"
+print("%s defaults -> typing=asmr key_sound=mechkey" % ("ok  " if ok else "FAIL"))
+failed |= not ok
 payload = {"tool_name": "mcp__computer-use__type", "tool_use_id": "toolu_test_1", "tool_input": {"text": "Merhaba d\u00fcnya"}}
 command, printed = run_pre(payload)
 stash = hook.stash_path("toolu_test_1")

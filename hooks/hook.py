@@ -60,13 +60,14 @@ def sound_settings():
             value = os.environ.get(env_key) or default
         return str(value).strip() or "none"
 
-    typing = pick("typing", "CLICK_OVERLAY_TYPING", "fast").lower()
+    typing = pick("typing", "CLICK_OVERLAY_TYPING", "asmr").lower()
     if typing not in ("fast", "asmr"):
         typing = "fast"
     return {
         "sound": pick("sound", "CLICK_OVERLAY_SOUND", "mouse"),
         # Computer use types at about 100 keystrokes per second, which no key sound survives, so
-        # typing is silent unless the human-paced mode is on or a key sound is chosen explicitly.
+        # fast typing is silent unless a key sound is chosen explicitly; the default asmr mode
+        # paces the typing and plays the mechanical keyboard.
         "key_sound": pick("key_sound", "CLICK_OVERLAY_KEY_SOUND", "mechkey" if typing == "asmr" else "none"),
         "scroll_sound": pick("scroll_sound", "CLICK_OVERLAY_SCROLL_SOUND", "none"),
         "volume": pick("volume", "CLICK_OVERLAY_VOLUME", "0.6"),
