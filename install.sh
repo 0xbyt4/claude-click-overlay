@@ -28,6 +28,7 @@ python3 "$REPO_DIR/tools/test_sizing.py"
 python3 "$REPO_DIR/tools/test_calibration.py"
 
 HOOK="python3 \"$REPO_DIR/hooks/hook.py\""
+HOOK_JSON=$(printf '%s' "$HOOK" | sed 's/"/\\"/g')
 MATCHER_PRE='^mcp__computer-use__(left_click|right_click|middle_click|double_click|triple_click|left_click_drag|scroll|computer_batch)$'
 MATCHER_POST='^mcp__computer-use__(left_click|right_click|middle_click|double_click|triple_click|left_click_drag|scroll|mouse_move|computer_batch)$'
 
@@ -62,13 +63,13 @@ Add this to ~/.claude/settings.json (or run ./install.sh --user to do it for you
     "PreToolUse": [
       {
         "matcher": "$MATCHER_PRE",
-        "hooks": [{ "type": "command", "command": "$HOOK pre", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "$HOOK_JSON pre", "timeout": 10 }]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "$MATCHER_POST",
-        "hooks": [{ "type": "command", "command": "$HOOK post", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "$HOOK_JSON post", "timeout": 10 }]
       }
     ]
   }
