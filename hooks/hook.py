@@ -63,7 +63,17 @@ def sound_settings():
     typing = pick("typing", "CLICK_OVERLAY_TYPING", "asmr").lower()
     if typing not in ("fast", "asmr"):
         typing = "fast"
+    style = pick("style", "CLICK_OVERLAY_STYLE", "reticle").lower()
+    if style not in MARKER_STYLES:
+        style = "reticle"
+    stroke = pick("stroke", "CLICK_OVERLAY_STROKE", "halo").lower()
+    if stroke == "color":
+        stroke = "colour"
+    if stroke not in ("halo", "colour"):
+        stroke = "halo"
     return {
+        "style": style,
+        "stroke": stroke,
         "sound": pick("sound", "CLICK_OVERLAY_SOUND", "mouse"),
         # Computer use types at about 100 keystrokes per second, which no key sound survives, so
         # fast typing is silent unless a key sound is chosen explicitly; the default asmr mode
@@ -121,6 +131,9 @@ TOOL_PREFIX = "mcp__computer-use__"
 CLICK_ACTIONS = {"left_click", "right_click", "middle_click", "double_click", "triple_click"}
 POINTER_ACTIONS = CLICK_ACTIONS | {"scroll", "mouse_move", "left_click_drag"}
 KEYBOARD_ACTIONS = {"type", "key", "hold_key"}
+MARKER_STYLES = ("reticle", "ring", "sonar", "beacon", "path", "dot")
+# Marker kind per click action; the overlay colours the core dot and badge by kind.
+CLICK_KINDS = {"right_click": "right", "double_click": "double", "triple_click": "double"}
 MAX_CALIBRATION_SAMPLES = 12
 BANNER_TEXT_LIMIT = 70
 
@@ -272,7 +285,7 @@ def overlay_args(tool_name, tool_input, screen, size, banner_enabled=False):
         elif kind == "scroll":
             args += ["--marker", "%d,%d,%sscroll,scroll" % (x, y, number)]
         else:
-            args += ["--marker", "%d,%d,%s%s,click" % (x, y, number, kind.replace("_", " "))]
+            args += ["--marker", "%d,%d,%s%s,%s" % (x, y, number, kind.replace("_", " "), CLICK_KINDS.get(kind, "click"))]
     return args
 
 
@@ -342,7 +355,8 @@ def pre(payload):
         pass
     started = time.time()
     process = subprocess.Popen(
-        [OVERLAY_BIN, "show", "--ttl", str(MAX_TTL_SECONDS), "--sound", sound, "--key-sound", settings["key_sound"],
+        [OVERLAY_BIN, "show", "--ttl", str(MAX_TTL_SECONDS), "--style", settings["style"], "--stroke", settings["stroke"],
+         "--sound", sound, "--key-sound", settings["key_sound"],
          "--scroll-sound", settings["scroll_sound"], "--volume", settings["volume"], "--log", OVERLAY_LOG_FILE,
          "--state-dir", STATE_DIR, "--ready-file", READY_FILE] + args,
         stdin=subprocess.DEVNULL,
@@ -353,7 +367,7 @@ def pre(payload):
     with open(PID_FILE, "w", encoding="utf-8") as handle:
         handle.write(str(process.pid))
     ready = wait_until_ready(process, started)
-    log("pre %s overlay=%s image=%dx%d(%s) sound=%s/%s/%s pid=%d ready=%s" % (action_name(tool_name), args[1::2], width, height, source, sound, settings["key_sound"], settings["scroll_sound"], process.pid, ready))
+    log("pre %s overlay=%s image=%dx%d(%s) style=%s/%s sound=%s/%s/%s pid=%d ready=%s" % (action_name(tool_name), args[1::2], width, height, source, settings["style"], settings["stroke"], sound, settings["key_sound"], settings["scroll_sound"], process.pid, ready))
     time.sleep(PREVIEW_SECONDS)
 
 

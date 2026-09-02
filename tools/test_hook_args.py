@@ -95,6 +95,7 @@ for case in CASES:
         banner = [command[i + 1] for i, token in enumerate(command) if token == "--banner"]
         options = dict(zip(command[2::2], command[3::2]))
         ok = (markers == expected_markers and banner == expected_banner and options.get("--sound") == "Pop"
+              and options.get("--style") == "reticle" and options.get("--stroke") == "halo"
               and options.get("--key-sound") == "none" and options.get("--scroll-sound") == "none"
               and options.get("--volume") == "0.4" and "--log" in command and options.get("--state-dir") == STATE_DIR)
         print("%s %s -> markers=%s banner=%s" % ("ok  " if ok else "FAIL", hook.action_name(payload["tool_name"]), markers, banner))
@@ -125,6 +126,16 @@ command, _ = run_pre(CASES[0][0])
 options = dict(zip(command[2::2], command[3::2]))
 ok = options.get("--sound") == "melody:tetris" and options.get("--key-sound") == "typewriter" and options.get("--scroll-sound") == "bubble" and options.get("--volume") == "0.5"
 print("%s config file overrides environment -> sound=%s key=%s scroll=%s volume=%s" % ("ok  " if ok else "FAIL", options.get("--sound"), options.get("--key-sound"), options.get("--scroll-sound"), options.get("--volume")))
+failed |= not ok
+
+# Style and stroke come from the config file; right and double clicks carry their own kind.
+write_config({"typing": "fast", "style": "sonar", "stroke": "color"})
+command, _ = run_pre({"tool_name": "mcp__computer-use__computer_batch", "tool_input": {"actions": [
+    {"action": "right_click", "coordinate": [456, 629]}, {"action": "double_click", "coordinate": [517, 578]}]}})
+options = dict(zip(command[2::2], command[3::2]))
+markers = [command[i + 1] for i, token in enumerate(command) if token == "--marker"]
+ok = options.get("--style") == "sonar" and options.get("--stroke") == "colour" and markers == ["489,674,1 right click,right", "554,619,2 double click,double"]
+print("%s style/stroke from config, kinds per click -> style=%s stroke=%s markers=%s" % ("ok  " if ok else "FAIL", options.get("--style"), options.get("--stroke"), markers))
 failed |= not ok
 
 # Banner on: keyboard actions get banner lines and share the numbering.

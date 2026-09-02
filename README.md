@@ -80,6 +80,8 @@ Environment variables read by the hook:
 | `CLICK_OVERLAY_LINGER_MS` | `350` | How long the marker stays after the action finishes |
 | `CLICK_OVERLAY_READY_TIMEOUT_MS` | `3000` | Longest wait for the overlay to come up before the action runs anyway |
 | `CLICK_OVERLAY_MAX_TTL_S` | `120` | Safety limit for an overlay that is never dismissed |
+| `CLICK_OVERLAY_STYLE` | `reticle` | Marker style, see [Styles](#styles) |
+| `CLICK_OVERLAY_STROKE` | `halo` | `halo` (white line, dark halo) or `colour` |
 | `CLICK_OVERLAY_SOUND` | `mouse` | Click sound, see [Sounds](#sounds) |
 | `CLICK_OVERLAY_KEY_SOUND` | `mechkey` (`none` in fast mode) | Sound per keystroke while Claude types |
 | `CLICK_OVERLAY_TYPING` | `asmr` | `asmr` or `fast`, see [Typing modes](#typing-modes) |
@@ -183,13 +185,38 @@ is why none ship here; point `use` at a file you have the rights to instead.
 `CLICK_OVERLAY_VOLUME` in the environment still work as defaults; the config file wins when both
 are set.
 
+## Styles
+
+Six marker styles ship; `reticle` is the default. Every style shares the same behaviour, the
+preview delay, the press animation, the sequence highlighting, and differs only in how the
+target is drawn.
+
+| Style | Look | Good for |
+| :-- | :-- | :-- |
+| `reticle` | four corner brackets framing the target, badge on the corner | everyday use, nothing covers the target |
+| `ring` | ring with a crosshair and a label pill, the original look | people who want the crosshair |
+| `sonar` | thin ring with two pulses spreading outward | a softer, livelier marker |
+| `beacon` | translucent disc with the number inside | demos and screen recordings |
+| `path` | numbered stops joined by a dashed route | showing the plan of a batch |
+| `dot` | a dot, a hairline ring, a tiny number | the quietest option |
+
+The stroke is `halo` by default: a white line with a dark halo that reads on light and dark
+apps alike, with the action's colour in the centre dot and the badge. `colour` strokes the
+shape in the action's colour instead. Colours: red for clicks, purple for right clicks, orange
+for double clicks and drags, blue for scrolling.
+
+```sh
+overlay/build/click-overlay use --style sonar
+overlay/build/click-overlay use --style ring --stroke colour
+```
+
 ## Markers
 
 | Action | Marker |
 | :-- | :-- |
-| left, right, middle, double, triple click | red ring with crosshair and the click type |
-| scroll | blue ring labelled `scroll` |
-| left_click_drag | orange start and end rings joined by a dashed line |
+| left, right, middle, double, triple click | the style's target mark with the click type; right clicks purple, double clicks orange |
+| scroll | blue mark labelled `scroll` |
+| left_click_drag | orange start and end marks joined by a dashed line |
 | type, key, hold_key | nothing by default; with the banner on, a line at the top of the screen showing the text or key |
 | computer_batch | one marker (or banner line) per action, numbered in execution order |
 

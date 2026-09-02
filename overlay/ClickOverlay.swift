@@ -8,10 +8,11 @@ import Foundation
 // sound when the click actually happens.
 //
 // Subcommands:
-//   show [--ttl SECONDS] [--sound SPEC] [--key-sound SPEC] [--scroll-sound SPEC] [--volume 0..1]
+//   show [--ttl SECONDS] [--style NAME] [--stroke halo|colour] [--sound SPEC] [--key-sound SPEC] [--scroll-sound SPEC] [--volume 0..1]
 //        [--log FILE] [--state-dir DIR] [--ready-file FILE] [--banner TEXT ...] [--marker X,Y,LABEL,KIND ...]
 //        X,Y are logical points with a top-left origin (CGWindowList convention).
-//        KIND is one of: click, scroll, move, drag-start, drag-end.
+//        KIND is one of: click, right, double, scroll, move, drag-start, drag-end.
+//        STYLE is one of: reticle, ring, sonar, beacon, path, dot.
 //        A banner line is shown at the top of the screen, used for upcoming keyboard input.
 //        The ready file is created once the markers are visible and the event monitors are
 //        installed; the hook waits for it before letting the action proceed.
@@ -64,6 +65,8 @@ struct ShowOptions {
     var markers: [Marker] = []
     var banner: [String] = []
     var ttl: Double = 2.0
+    var style = "reticle"
+    var stroke = "halo"
     var sound = "mouse"
     var keySound = "mechkey"
     var scrollSound = "none"
@@ -105,6 +108,14 @@ func parseShowOptions(_ args: [String]) -> ShowOptions {
         case "--ttl":
             guard let ttl = Double(value(for: "--ttl")) else { fail("--ttl needs a number") }
             options.ttl = ttl
+        case "--style":
+            let style = value(for: "--style").lowercased()
+            guard markerStyles.contains(style) else { fail("--style must be one of: " + markerStyles.joined(separator: ", ")) }
+            options.style = style
+        case "--stroke":
+            let stroke = value(for: "--stroke").lowercased()
+            guard stroke == "halo" || stroke == "colour" || stroke == "color" else { fail("--stroke must be halo or colour") }
+            options.stroke = stroke == "color" ? "colour" : stroke
         case "--sound":
             options.sound = value(for: "--sound")
         case "--key-sound":
@@ -143,10 +154,14 @@ func parseShowOptions(_ args: [String]) -> ShowOptions {
 
 // MARK: - Drawing
 
+let markerStyles = ["reticle", "ring", "sonar", "beacon", "path", "dot"]
+
 final class MarkerView: NSView {
     let markers: [Marker]
     let banner: [String]
     let screenHeight: CGFloat
+    let style: String
+    let halo: Bool
     var phase: CGFloat = 0
     var alphaScale: CGFloat = 1
     var pressedAt: [Int: Date] = [:]
@@ -156,12 +171,18 @@ final class MarkerView: NSView {
     /// after it is still to come; the overlay advances it as it observes clicks and scrolls.
     var current = 0
 
-    init(frame: NSRect, markers: [Marker], banner: [String], screenHeight: CGFloat) {
+    init(frame: NSRect, markers: [Marker], banner: [String], screenHeight: CGFloat, style: String, stroke: String) {
         self.markers = markers
         self.banner = banner
         self.screenHeight = screenHeight
+        self.style = markerStyles.contains(style) ? style : "reticle"
+        self.halo = stroke != "colour"
         super.init(frame: frame)
     }
+
+    required init?(coder: NSCoder) { nil }
+
+    // MARK: State
 
     /// Marks the next marker of the given kind as pressed, used for scroll feedback.
     @discardableResult
@@ -193,6 +214,121 @@ final class MarkerView: NSView {
         while high + 1 < markers.count && markers[high + 1].samePlace(as: markers[index]) { high += 1 }
         return low...high
     }
+
+    /// Marks the marker hit by a click as pressed: the expected next marker if the click is near
+    /// it, otherwise the nearest upcoming one, otherwise the nearest of all.
+    @discardableResult
+    func press(at location: NSPoint) -> Int? {
+        func distance(_ index: Int) -> CGFloat {
+            let center = point(markers[index])
+            return hypot(center.x - location.x, center.y - location.y)
+        }
+        var chosen: Int?
+        if current < markers.count, markers[current].kind != "scroll", distance(current) <= 60 {
+            chosen = current
+        } else {
+            let upcoming = markers.indices.filter { $0 >= current && markers[$0].kind != "scroll" && distance($0) <= 60 }
+            chosen = upcoming.min(by: { distance($0) < distance($1) })
+                ?? markers.indices.filter { distance($0) <= 60 }.min(by: { distance($0) < distance($1) })
+        }
+        if let index = chosen { complete(index) }
+        return chosen
+    }
+
+    // MARK: Geometry and colour
+
+    func color(for kind: String) -> NSColor {
+        switch kind {
+        case "scroll": return NSColor.systemBlue
+        case "move": return NSColor.systemGray
+        case "drag-start", "drag-end", "double": return NSColor.systemOrange
+        case "right": return NSColor.systemPurple
+        default: return NSColor.systemRed
+        }
+    }
+
+    /// Converts a marker's top-left-origin point to this view's bottom-left-origin space.
+    func point(_ marker: Marker) -> NSPoint {
+        NSPoint(x: marker.x, y: screenHeight - marker.y)
+    }
+
+    /// Strokes a shape either in the action colour or as a white line with a dark halo, which
+    /// stays readable on light and dark surfaces alike.
+    func stroke(_ path: NSBezierPath, tint: NSColor, width: CGFloat, alpha: CGFloat) {
+        if halo {
+            path.lineWidth = width + 2.5
+            NSColor.black.withAlphaComponent(0.55 * alpha).setStroke()
+            path.stroke()
+            path.lineWidth = width
+            NSColor.white.withAlphaComponent(alpha).setStroke()
+            path.stroke()
+        } else {
+            path.lineWidth = width
+            tint.withAlphaComponent(alpha).setStroke()
+            path.stroke()
+        }
+    }
+
+    func circle(_ center: NSPoint, _ radius: CGFloat) -> NSBezierPath {
+        NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+    }
+
+    func fillDot(_ center: NSPoint, radius: CGFloat, color: NSColor) {
+        color.setFill()
+        circle(center, radius).fill()
+    }
+
+    func drawText(_ text: String, at origin: NSPoint, size: CGFloat, alpha: CGFloat, outlined: Bool = false, centered: Bool = false) {
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: size),
+            .foregroundColor: NSColor.white.withAlphaComponent(alpha),
+        ]
+        if outlined {
+            attributes[.strokeColor] = NSColor.black.withAlphaComponent(alpha)
+            attributes[.strokeWidth] = -28
+        }
+        let string = text as NSString
+        let measured = string.size(withAttributes: attributes)
+        let at = centered ? NSPoint(x: origin.x - measured.width / 2, y: origin.y - measured.height / 2) : origin
+        string.draw(at: at, withAttributes: attributes)
+    }
+
+    /// Rounded label box, kept inside the screen near the right and top edges.
+    func drawLabel(_ text: String, near origin: NSPoint, tint: NSColor, alpha: CGFloat, small: Bool) {
+        guard !text.isEmpty else { return }
+        let size: CGFloat = small ? 11 : 13
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: size)]
+        let measured = (text as NSString).size(withAttributes: attributes)
+        var box = NSRect(x: origin.x, y: origin.y, width: measured.width + 12, height: measured.height + 6)
+        if box.maxX > bounds.maxX - 8 { box.origin.x = bounds.maxX - 8 - box.width }
+        if box.maxY > bounds.maxY - 8 { box.origin.y = bounds.maxY - 8 - box.height }
+        if box.minY < 8 { box.origin.y = 8 }
+        tint.withAlphaComponent(alpha).setFill()
+        NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5).fill()
+        drawText(text, at: NSPoint(x: box.minX + 6, y: box.minY + 3), size: size, alpha: alpha)
+    }
+
+    /// Small numbered badge, centred on a point.
+    func drawBadge(_ text: String, at center: NSPoint, tint: NSColor, alpha: CGFloat) {
+        guard !text.isEmpty else { return }
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)]
+        let measured = (text as NSString).size(withAttributes: attributes)
+        let box = NSRect(x: center.x - measured.width / 2 - 5, y: center.y - 8, width: measured.width + 10, height: 16)
+        tint.withAlphaComponent(alpha).setFill()
+        NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4).fill()
+        NSColor.white.withAlphaComponent(alpha).set()
+        (text as NSString).draw(at: NSPoint(x: box.minX + 5, y: box.minY + 1.5), withAttributes: [.font: attributes[.font]!, .foregroundColor: NSColor.white.withAlphaComponent(alpha)])
+    }
+
+    func drawRipple(_ center: NSPoint, tint: NSColor, progress: CGFloat, alpha: CGFloat) {
+        guard progress < 1 else { return }
+        let ring = circle(center, 22 + 30 * progress)
+        ring.lineWidth = 2
+        (halo ? NSColor.white : tint).withAlphaComponent(alpha * (1 - progress)).setStroke()
+        ring.stroke()
+    }
+
+    // MARK: Banner
 
     func drawBanner() {
         guard !banner.isEmpty else { return }
@@ -226,138 +362,220 @@ final class MarkerView: NSView {
         }
     }
 
-    required init?(coder: NSCoder) { nil }
+    // MARK: Markers
 
-    func color(for kind: String) -> NSColor {
-        switch kind {
-        case "scroll": return NSColor.systemBlue
-        case "move": return NSColor.systemGray
-        case "drag-start", "drag-end": return NSColor.systemOrange
-        default: return NSColor.systemRed
-        }
-    }
-
-    /// Converts a marker's top-left-origin point to this view's bottom-left-origin space.
-    func point(_ marker: Marker) -> NSPoint {
-        NSPoint(x: marker.x, y: screenHeight - marker.y)
-    }
-
-    /// Marks the marker hit by a click as pressed: the expected next marker if the click is near
-    /// it, otherwise the nearest upcoming one, otherwise the nearest of all.
-    @discardableResult
-    func press(at location: NSPoint) -> Int? {
-        func distance(_ index: Int) -> CGFloat {
-            let center = point(markers[index])
-            return hypot(center.x - location.x, center.y - location.y)
-        }
-        var chosen: Int?
-        if current < markers.count, markers[current].kind != "scroll", distance(current) <= 60 {
-            chosen = current
-        } else {
-            let upcoming = markers.indices.filter { $0 >= current && markers[$0].kind != "scroll" && distance($0) <= 60 }
-            chosen = upcoming.min(by: { distance($0) < distance($1) })
-                ?? markers.indices.filter { distance($0) <= 60 }.min(by: { distance($0) < distance($1) })
-        }
-        if let index = chosen { complete(index) }
-        return chosen
+    struct Frame {
+        let index: Int
+        let marker: Marker
+        let center: NSPoint
+        let tint: NSColor
+        let isCurrent: Bool
+        let isDone: Bool
+        let isPressed: Bool
+        let pressProgress: CGFloat
+        let alpha: CGFloat
+        let pulse: CGFloat
+        let rangeText: String
+        let labelText: String
     }
 
     override func draw(_ dirtyRect: NSRect) {
         drawBanner()
-        var dragStart: NSPoint?
         let sequential = markers.count > 1
+        if style == "path" && sequential { drawRoute() }
+        var frames: [Frame] = []
         for (index, marker) in markers.enumerated() {
             let group = group(of: index)
-            // One ring per place: the first marker of a group draws it while the group is
+            // One shape per place: the first marker of a group draws it while the group is
             // pending, and the label names the whole group.
             if sequential && group.lowerBound != index && pressedAt[index] == nil { continue }
             let isCurrent = !sequential || group.contains(current)
             let isDone = sequential && group.upperBound < current
             let emphasis: CGFloat = isCurrent ? 1 : (isDone ? 0.22 : 0.4)
-            let center = point(marker)
-            let tint = color(for: marker.kind).withAlphaComponent(alphaScale * emphasis)
             let pressProgress: CGFloat = {
                 guard let pressed = pressedAt[index] else { return 0 }
                 return CGFloat(min(1, Date().timeIntervalSince(pressed) / 0.35))
             }()
-            let isPressed = pressedAt[index] != nil
-
-            if marker.kind == "drag-start" { dragStart = center }
-            if marker.kind == "drag-end", let start = dragStart {
-                let line = NSBezierPath()
-                line.move(to: start)
-                line.line(to: center)
-                line.lineWidth = 3
-                line.setLineDash([8, 6], count: 2, phase: phase * 14)
-                tint.setStroke()
-                line.stroke()
-            }
-
-            let pulse = isCurrent ? 4 * sin(phase * .pi * 2) : 0
-            let baseRadius: CGFloat = (marker.kind == "move" ? 14 : (isCurrent ? 22 : 16)) + pulse
-            let radius = isPressed ? baseRadius * (1 - 0.35 * pressProgress) : baseRadius
-            let ring = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
-            ring.lineWidth = marker.kind == "move" ? 2 : 4
-            tint.setStroke()
-            ring.stroke()
-            if isPressed {
-                tint.withAlphaComponent(alphaScale * 0.5 * (1 - pressProgress)).setFill()
-                ring.fill()
-                let ripple = baseRadius + 30 * pressProgress
-                let ripplePath = NSBezierPath(ovalIn: NSRect(x: center.x - ripple, y: center.y - ripple, width: ripple * 2, height: ripple * 2))
-                ripplePath.lineWidth = 2
-                tint.withAlphaComponent(alphaScale * (1 - pressProgress)).setStroke()
-                ripplePath.stroke()
-            }
-
-            let inner = NSBezierPath(ovalIn: NSRect(x: center.x - 3, y: center.y - 3, width: 6, height: 6))
-            tint.setFill()
-            inner.fill()
-
-            if marker.kind != "move" {
-                let cross = NSBezierPath()
-                cross.move(to: NSPoint(x: center.x - radius - 10, y: center.y))
-                cross.line(to: NSPoint(x: center.x - radius + 2, y: center.y))
-                cross.move(to: NSPoint(x: center.x + radius - 2, y: center.y))
-                cross.line(to: NSPoint(x: center.x + radius + 10, y: center.y))
-                cross.move(to: NSPoint(x: center.x, y: center.y - radius - 10))
-                cross.line(to: NSPoint(x: center.x, y: center.y - radius + 2))
-                cross.move(to: NSPoint(x: center.x, y: center.y + radius - 2))
-                cross.line(to: NSPoint(x: center.x, y: center.y + radius + 10))
-                cross.lineWidth = 2
-                cross.stroke()
-            }
-
-            // Label: the current group gets its full text, upcoming groups only their numbers,
-            // finished groups nothing.
+            let numbers = group.compactMap { markers[$0].number }
+            let range = numbers.count > 1 ? "\(numbers.first!)-\(numbers.last!)" : (numbers.first.map(String.init) ?? "")
             var labelText = marker.label
             if sequential {
-                let numbers = group.compactMap { markers[$0].number }
-                let range = numbers.count > 1 ? "\(numbers.first!)-\(numbers.last!)" : (numbers.first.map(String.init) ?? "")
-                if isDone {
-                    labelText = ""
-                } else if isCurrent {
-                    labelText = [range, marker.text].filter { !$0.isEmpty }.joined(separator: " ")
-                } else {
-                    labelText = range
-                }
+                labelText = isDone ? "" : (isCurrent ? [range, marker.text].filter { !$0.isEmpty }.joined(separator: " ") : range)
             }
-            if !labelText.isEmpty {
-                let text = labelText as NSString
-                let attributes: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.boldSystemFont(ofSize: isCurrent ? 13 : 11),
-                    .foregroundColor: NSColor.white.withAlphaComponent(alphaScale * (isCurrent ? 1 : 0.85)),
-                ]
-                let size = text.size(withAttributes: attributes)
-                var origin = NSPoint(x: center.x + baseRadius + 12, y: center.y + baseRadius - 2)
-                // Keep the label on screen near the right and top edges.
-                if origin.x + size.width + 12 > bounds.maxX { origin.x = center.x - baseRadius - size.width - 24 }
-                if origin.y + size.height + 6 > bounds.maxY { origin.y = center.y - baseRadius - size.height - 8 }
-                let box = NSRect(x: origin.x, y: origin.y, width: size.width + 12, height: size.height + 6)
-                tint.setFill()
-                NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5).fill()
-                text.draw(at: NSPoint(x: box.minX + 6, y: box.minY + 3), withAttributes: attributes)
+            frames.append(Frame(index: index, marker: marker, center: point(marker), tint: color(for: marker.kind),
+                                isCurrent: isCurrent, isDone: isDone, isPressed: pressedAt[index] != nil, pressProgress: pressProgress,
+                                alpha: alphaScale * emphasis, pulse: isCurrent ? sin(phase * .pi * 2) : 0,
+                                rangeText: sequential ? range : "", labelText: labelText))
+        }
+        var dragStart: NSPoint?
+        for frame in frames {
+            if frame.marker.kind == "drag-start" { dragStart = frame.center }
+            if frame.marker.kind == "drag-end", let start = dragStart {
+                let line = NSBezierPath()
+                line.move(to: start)
+                line.line(to: frame.center)
+                line.setLineDash([8, 6], count: 2, phase: phase * 14)
+                stroke(line, tint: frame.tint, width: 3, alpha: frame.alpha)
             }
+            switch style {
+            case "ring": drawRing(frame)
+            case "sonar": drawSonar(frame)
+            case "beacon": drawBeacon(frame)
+            case "path": drawStop(frame)
+            case "dot": drawDot(frame)
+            default: drawReticle(frame)
+            }
+        }
+    }
+
+    /// Reticle: four corner brackets framing the target, a badge on the corner, nothing across it.
+    func drawReticle(_ f: Frame) {
+        if f.isDone {
+            fillDot(f.center, radius: 4, color: f.tint.withAlphaComponent(f.alpha))
+            return
+        }
+        let base: CGFloat = f.isCurrent ? 22 : 15
+        let half = f.isPressed ? base - 5 * (1 - f.pressProgress * 0.4) : base + base * 0.08 * f.pulse
+        let arm: CGFloat = f.isCurrent ? 9 : 6
+        let path = NSBezierPath()
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        for corner in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
+            let cx = f.center.x + CGFloat(corner.0) * half
+            let cy = f.center.y + CGFloat(corner.1) * half
+            path.move(to: NSPoint(x: cx - CGFloat(corner.0) * arm, y: cy))
+            path.line(to: NSPoint(x: cx, y: cy))
+            path.line(to: NSPoint(x: cx, y: cy - CGFloat(corner.1) * arm))
+        }
+        if f.isPressed { drawRipple(f.center, tint: f.tint, progress: f.pressProgress, alpha: f.alpha) }
+        stroke(path, tint: f.tint, width: f.isCurrent ? 3 : 2, alpha: f.alpha)
+        fillDot(f.center, radius: 3.5, color: f.tint.withAlphaComponent(f.alpha))
+        if !f.rangeText.isEmpty {
+            drawBadge(f.rangeText, at: NSPoint(x: f.center.x + half + 4, y: f.center.y + half + 4), tint: f.tint, alpha: f.alpha)
+        }
+        if f.isCurrent && !f.marker.text.isEmpty {
+            drawLabel(f.marker.text, near: NSPoint(x: f.center.x - 28, y: f.center.y - half - 24), tint: f.tint, alpha: f.alpha, small: true)
+        }
+    }
+
+    /// Ring and crosshair, the original look.
+    func drawRing(_ f: Frame) {
+        let radius: CGFloat = (f.isCurrent ? 22 : 16) + 4 * f.pulse
+        let r = f.isPressed ? radius * (1 - 0.35 * f.pressProgress) : radius
+        if f.isPressed {
+            f.tint.withAlphaComponent(f.alpha * 0.5 * (1 - f.pressProgress)).setFill()
+            circle(f.center, r).fill()
+            drawRipple(f.center, tint: f.tint, progress: f.pressProgress, alpha: f.alpha)
+        }
+        stroke(circle(f.center, r), tint: f.tint, width: f.isCurrent ? 4 : 3, alpha: f.alpha)
+        fillDot(f.center, radius: 3, color: f.tint.withAlphaComponent(f.alpha))
+        if f.isCurrent {
+            let cross = NSBezierPath()
+            for d in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                cross.move(to: NSPoint(x: f.center.x + CGFloat(d.0) * (r + 2), y: f.center.y + CGFloat(d.1) * (r + 2)))
+                cross.line(to: NSPoint(x: f.center.x + CGFloat(d.0) * (r + 10), y: f.center.y + CGFloat(d.1) * (r + 10)))
+            }
+            stroke(cross, tint: f.tint, width: 2, alpha: f.alpha)
+            drawLabel(f.labelText, near: NSPoint(x: f.center.x + radius + 12, y: f.center.y + radius - 2), tint: f.tint, alpha: f.alpha, small: false)
+        } else if !f.isDone {
+            drawBadge(f.rangeText, at: NSPoint(x: f.center.x + radius + 8, y: f.center.y + radius), tint: f.tint, alpha: f.alpha)
+        }
+    }
+
+    /// Sonar: a thin ring with two pulses spreading outward.
+    func drawSonar(_ f: Frame) {
+        if f.isPressed {
+            fillDot(f.center, radius: 10, color: f.tint.withAlphaComponent(f.alpha * 0.6))
+            drawRipple(f.center, tint: f.tint, progress: f.pressProgress, alpha: f.alpha)
+        } else if f.isCurrent {
+            let spread = CGFloat(phase)
+            for (base, strength) in [(22.0, 0.5), (30.0, 0.25)] {
+                let ring = circle(f.center, CGFloat(base) + 6 * spread)
+                ring.lineWidth = 1.5
+                f.tint.withAlphaComponent(f.alpha * CGFloat(strength) * (1 - spread * 0.6)).setStroke()
+                ring.stroke()
+            }
+        }
+        stroke(circle(f.center, f.isCurrent ? 14 : 11), tint: f.tint, width: 2, alpha: f.alpha)
+        fillDot(f.center, radius: 3, color: f.tint.withAlphaComponent(f.alpha))
+        if f.isCurrent {
+            drawLabel(f.labelText, near: NSPoint(x: f.center.x + 20, y: f.center.y + 14), tint: f.tint, alpha: f.alpha, small: true)
+        } else if !f.isDone {
+            drawBadge(f.rangeText, at: NSPoint(x: f.center.x + 18, y: f.center.y + 14), tint: f.tint, alpha: f.alpha)
+        }
+    }
+
+    /// Beacon: a translucent disc with the number inside.
+    func drawBeacon(_ f: Frame) {
+        let radius: CGFloat = (f.isCurrent ? 22 : 16) + 2 * f.pulse
+        if f.isPressed { drawRipple(f.center, tint: f.tint, progress: f.pressProgress, alpha: f.alpha) }
+        fillDot(f.center, radius: radius, color: f.tint.withAlphaComponent(f.alpha * (f.isPressed ? 0.55 : 0.28)))
+        let edge = circle(f.center, radius)
+        edge.lineWidth = 2
+        f.tint.withAlphaComponent(f.alpha * 0.85).setStroke()
+        edge.stroke()
+        if !f.rangeText.isEmpty {
+            drawText(f.rangeText, at: f.center, size: f.isCurrent ? 15 : 12, alpha: f.alpha, centered: true)
+        } else {
+            fillDot(f.center, radius: 4, color: NSColor.white.withAlphaComponent(f.alpha))
+        }
+        if f.isCurrent && !f.marker.text.isEmpty {
+            drawLabel(f.marker.text, near: NSPoint(x: f.center.x - 28, y: f.center.y - radius - 24), tint: f.tint, alpha: f.alpha, small: true)
+        }
+    }
+
+    /// Path: the dashed route through every target, drawn once under the stops.
+    func drawRoute() {
+        guard markers.count > 1 else { return }
+        let route = NSBezierPath()
+        route.move(to: point(markers[0]))
+        for marker in markers.dropFirst() { route.line(to: point(marker)) }
+        route.lineWidth = 3
+        NSColor.white.withAlphaComponent(alphaScale * 0.35).setStroke()
+        route.stroke()
+        route.lineWidth = 1.5
+        route.setLineDash([6, 5], count: 2, phase: phase * 11)
+        color(for: markers[0].kind).withAlphaComponent(alphaScale * 0.9).setStroke()
+        route.stroke()
+    }
+
+    /// Path stop: a numbered disc on the route, the current one ringed.
+    func drawStop(_ f: Frame) {
+        if f.isPressed { drawRipple(f.center, tint: f.tint, progress: f.pressProgress, alpha: f.alpha) }
+        if f.isCurrent {
+            let ring = circle(f.center, 19 + 2 * f.pulse)
+            ring.lineWidth = 3
+            f.tint.withAlphaComponent(f.alpha).setStroke()
+            ring.stroke()
+        }
+        let fill = f.isDone ? NSColor(calibratedWhite: 0.55, alpha: 1) : (f.isCurrent ? f.tint : NSColor(calibratedWhite: 0.12, alpha: 1))
+        fillDot(f.center, radius: 11, color: fill.withAlphaComponent(f.alpha))
+        let edge = circle(f.center, 11)
+        edge.lineWidth = 2
+        (f.isCurrent ? f.tint : NSColor.white).withAlphaComponent(f.alpha).setStroke()
+        edge.stroke()
+        drawText(f.rangeText.isEmpty ? "\u{2022}" : f.rangeText, at: f.center, size: 11, alpha: f.alpha, centered: true)
+        if f.isCurrent && !f.marker.text.isEmpty {
+            drawLabel(f.marker.text, near: NSPoint(x: f.center.x + 24, y: f.center.y + 12), tint: f.tint, alpha: f.alpha, small: true)
+        }
+    }
+
+    /// Dot: the quietest option, a dot and a hairline ring.
+    func drawDot(_ f: Frame) {
+        if f.isPressed { drawRipple(f.center, tint: f.tint, progress: f.pressProgress, alpha: f.alpha) }
+        if f.isCurrent {
+            stroke(circle(f.center, (f.isPressed ? 15 : 11) + 1.5 * f.pulse), tint: f.tint, width: 1.5, alpha: f.alpha)
+        }
+        fillDot(f.center, radius: f.isCurrent ? 5 : 4, color: f.tint.withAlphaComponent(f.alpha))
+        let rim = circle(f.center, f.isCurrent ? 5 : 4)
+        rim.lineWidth = 1.5
+        NSColor.white.withAlphaComponent(f.alpha).setStroke()
+        rim.stroke()
+        if !f.rangeText.isEmpty {
+            drawText(f.rangeText, at: NSPoint(x: f.center.x + 12, y: f.center.y + 10), size: 11, alpha: f.alpha, outlined: true, centered: true)
+        }
+        if f.isCurrent && !f.marker.text.isEmpty {
+            drawLabel(f.marker.text, near: NSPoint(x: f.center.x + 16, y: f.center.y - 26), tint: f.tint, alpha: f.alpha, small: true)
         }
     }
 }
@@ -414,13 +632,13 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
         window.isReleasedWhenClosed = false
         window.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        view = MarkerView(frame: NSRect(origin: .zero, size: screen.frame.size), markers: options.markers, banner: options.banner, screenHeight: screen.frame.height)
+        view = MarkerView(frame: NSRect(origin: .zero, size: screen.frame.size), markers: options.markers, banner: options.banner, screenHeight: screen.frame.height, style: options.style, stroke: options.stroke)
         window.contentView = view
         window.orderFrontRegardless()
 
         // Order matters: markers and monitors first, audio afterwards. A cold audio engine can take
         // seconds to start and the click must not land before the monitors exist.
-        log("shown markers=\(options.markers.count) banner=\(options.banner.count) sound=\(options.sound) key=\(options.keySound) scroll=\(options.scrollSound) accessibilityTrusted=\(AXIsProcessTrusted())")
+        log("shown markers=\(options.markers.count) banner=\(options.banner.count) style=\(options.style)/\(options.stroke) sound=\(options.sound) key=\(options.keySound) scroll=\(options.scrollSound) accessibilityTrusted=\(AXIsProcessTrusted())")
 
         // Synthetic events posted by computer use reach global monitors like real ones, so these
         // fire at the moment each click, keystroke, or scroll tick lands.

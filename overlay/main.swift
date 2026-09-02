@@ -26,7 +26,8 @@ case "sounds":
     print("System sounds: " + systemSoundNames().joined(separator: ", "))
     print("Melodies (one note per click): " + melodies.map { "melody:\($0.name) (\($0.summary))" }.joined(separator: ", "))
     print("Modes: random | random:a,b,c | say:TEXT | /path/to/file.aiff | none")
-    print("Choose: click-overlay use CLICK_SPEC [--key SPEC] [--scroll SPEC] [--typing fast|asmr] [--banner on|off] [--cps N] [--volume 0..1]")
+    print("Styles: " + markerStyles.joined(separator: ", ") + " with --stroke halo|colour")
+    print("Choose: click-overlay use [CLICK_SPEC] [--style NAME] [--stroke halo|colour] [--key SPEC] [--scroll SPEC] [--typing fast|asmr] [--banner on|off] [--cps N] [--volume 0..1]")
 case "play", "render", "use":
     var rest = Array(arguments.dropFirst())
     var volume: Float = 0.6
@@ -43,7 +44,7 @@ case "play", "render", "use":
     var keySpec: String?
     var scrollSpec: String?
     var extras: [String: Any] = [:]
-    for (flag, target) in [("--key", 0), ("--scroll", 1), ("--typing", 2), ("--banner", 3), ("--cps", 4)] {
+    for (flag, target) in [("--key", 0), ("--scroll", 1), ("--typing", 2), ("--banner", 3), ("--cps", 4), ("--style", 5), ("--stroke", 6)] {
         if let index = rest.firstIndex(of: flag) {
             guard index + 1 < rest.count else { fail("\(flag) needs a value") }
             let value = rest[index + 1]
@@ -56,9 +57,16 @@ case "play", "render", "use":
             case 3:
                 guard ["on", "off"].contains(value.lowercased()) else { fail("--banner must be on or off") }
                 extras["typing_banner"] = value.lowercased()
-            default:
+            case 4:
                 guard let cps = Double(value), cps > 0 else { fail("--cps needs a positive number") }
                 extras["asmr_cps"] = NSDecimalNumber(string: String(format: "%.1f", cps))
+            case 5:
+                guard markerStyles.contains(value.lowercased()) else { fail("--style must be one of: " + markerStyles.joined(separator: ", ")) }
+                extras["style"] = value.lowercased()
+            default:
+                let stroke = value.lowercased() == "color" ? "colour" : value.lowercased()
+                guard stroke == "halo" || stroke == "colour" else { fail("--stroke must be halo or colour") }
+                extras["stroke"] = stroke
             }
             rest.removeSubrange(index...index + 1)
         }
@@ -68,7 +76,7 @@ case "play", "render", "use":
     }
     let spec = rest.first
     if command != "use" && spec == nil { fail("usage: click-overlay \(command) SPEC [--volume 0..1]") }
-    if command == "use" && spec == nil && keySpec == nil && scrollSpec == nil && extras.isEmpty { fail("usage: click-overlay use [CLICK_SPEC] [--key SPEC] [--scroll SPEC] [--typing fast|asmr] [--banner on|off] [--cps N] [--volume 0..1] | use --clear") }
+    if command == "use" && spec == nil && keySpec == nil && scrollSpec == nil && extras.isEmpty { fail("usage: click-overlay use [CLICK_SPEC] [--style NAME] [--stroke halo|colour] [--key SPEC] [--scroll SPEC] [--typing fast|asmr] [--banner on|off] [--cps N] [--volume 0..1] | use --clear") }
     let player = SoundPlayer(spec: spec ?? "none", volume: volume, stateDirectory: nil)
     if let problem = player.problem { fail("\(problem). Run 'click-overlay sounds' to list the options.") }
     if command == "play" {
@@ -88,7 +96,7 @@ case "play", "render", "use":
         do { try writeConfig(config) } catch { fail("cannot write config: \(error.localizedDescription)") }
         let typing = (config["typing"] as? String) ?? "asmr"
         let keyDefault = typing == "asmr" ? "mechkey" : "none"
-        print("click=\(config["sound"] ?? "mouse") key=\(config["key_sound"] ?? keyDefault) scroll=\(config["scroll_sound"] ?? "none") typing=\(typing) banner=\(config["typing_banner"] ?? "off") volume=\(volume) saved to \(configPath())")
+        print("style=\(config["style"] ?? "reticle")/\(config["stroke"] ?? "halo") click=\(config["sound"] ?? "mouse") key=\(config["key_sound"] ?? keyDefault) scroll=\(config["scroll_sound"] ?? "none") typing=\(typing) banner=\(config["typing_banner"] ?? "off") volume=\(volume) saved to \(configPath())")
     }
 case "type-human":
     runHumanTyping(parseHumanTypingOptions(Array(arguments.dropFirst())))
