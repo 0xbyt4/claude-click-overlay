@@ -35,6 +35,29 @@ struct Marker {
     let y: CGFloat
     let label: String
     let kind: String
+    /// Position in the batch, parsed from a leading number in the label ("3 left click").
+    let number: Int?
+    /// Label without the leading number.
+    let text: String
+
+    init(x: CGFloat, y: CGFloat, label: String, kind: String) {
+        self.x = x
+        self.y = y
+        self.label = label
+        self.kind = kind
+        let parts = label.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        if let first = parts.first, let number = Int(first) {
+            self.number = number
+            self.text = parts.count > 1 ? String(parts[1]) : ""
+        } else {
+            self.number = nil
+            self.text = label
+        }
+    }
+
+    func samePlace(as other: Marker) -> Bool {
+        abs(x - other.x) < 4 && abs(y - other.y) < 4 && kind == other.kind
+    }
 }
 
 struct ShowOptions {
@@ -129,6 +152,9 @@ final class MarkerView: NSView {
     var pressedAt: [Int: Date] = [:]
     var keyFlashAt: Date?
     var keystrokes = 0
+    /// Index of the marker whose action comes next. Everything before it is done, everything
+    /// after it is still to come; the overlay advances it as it observes clicks and scrolls.
+    var current = 0
 
     init(frame: NSRect, markers: [Marker], banner: [String], screenHeight: CGFloat) {
         self.markers = markers
@@ -137,13 +163,35 @@ final class MarkerView: NSView {
         super.init(frame: frame)
     }
 
-    /// Marks the nearest marker of the given kind as pressed, used for scroll feedback.
-    func press(kind: String) {
-        var chosen: Int?
-        for (index, marker) in markers.enumerated() where marker.kind == kind {
-            if chosen == nil || (pressedAt[index] == nil && pressedAt[chosen!] != nil) { chosen = index }
+    /// Marks the next marker of the given kind as pressed, used for scroll feedback.
+    @discardableResult
+    func press(kind: String) -> Int? {
+        let candidates = markers.indices.filter { markers[$0].kind == kind }
+        guard let index = candidates.first(where: { $0 >= current }) ?? candidates.first(where: { pressedAt[$0] == nil }) ?? candidates.last else { return nil }
+        complete(index)
+        return index
+    }
+
+    /// Records a marker as done and moves the highlight to the one after it. A drag's start and
+    /// end markers belong to one action, so both are completed together.
+    func complete(_ index: Int) {
+        pressedAt[index] = Date()
+        var next = index + 1
+        if markers[index].kind == "drag-start", next < markers.count, markers[next].kind == "drag-end" {
+            pressedAt[next] = Date()
+            next += 1
         }
-        if let index = chosen { pressedAt[index] = Date() }
+        if next > current { current = next }
+    }
+
+    /// Consecutive markers at the same place (a key pressed three times) share one ring; this is
+    /// the range of indices grouped with `index`.
+    func group(of index: Int) -> ClosedRange<Int> {
+        var low = index
+        var high = index
+        while low > 0 && markers[low - 1].samePlace(as: markers[index]) { low -= 1 }
+        while high + 1 < markers.count && markers[high + 1].samePlace(as: markers[index]) { high += 1 }
+        return low...high
     }
 
     func drawBanner() {
@@ -194,25 +242,40 @@ final class MarkerView: NSView {
         NSPoint(x: marker.x, y: screenHeight - marker.y)
     }
 
-    /// Marks the marker nearest to a screen location (AppKit coordinates) as pressed.
-    func press(at location: NSPoint) {
-        var best: (index: Int, distance: CGFloat)?
-        for (index, marker) in markers.enumerated() {
-            let center = point(marker)
-            let distance = hypot(center.x - location.x, center.y - location.y)
-            if distance <= 60 && (best == nil || distance < best!.distance) {
-                best = (index, distance)
-            }
+    /// Marks the marker hit by a click as pressed: the expected next marker if the click is near
+    /// it, otherwise the nearest upcoming one, otherwise the nearest of all.
+    @discardableResult
+    func press(at location: NSPoint) -> Int? {
+        func distance(_ index: Int) -> CGFloat {
+            let center = point(markers[index])
+            return hypot(center.x - location.x, center.y - location.y)
         }
-        if let best = best { pressedAt[best.index] = Date() }
+        var chosen: Int?
+        if current < markers.count, markers[current].kind != "scroll", distance(current) <= 60 {
+            chosen = current
+        } else {
+            let upcoming = markers.indices.filter { $0 >= current && markers[$0].kind != "scroll" && distance($0) <= 60 }
+            chosen = upcoming.min(by: { distance($0) < distance($1) })
+                ?? markers.indices.filter { distance($0) <= 60 }.min(by: { distance($0) < distance($1) })
+        }
+        if let index = chosen { complete(index) }
+        return chosen
     }
 
     override func draw(_ dirtyRect: NSRect) {
         drawBanner()
         var dragStart: NSPoint?
+        let sequential = markers.count > 1
         for (index, marker) in markers.enumerated() {
+            let group = group(of: index)
+            // One ring per place: the first marker of a group draws it while the group is
+            // pending, and the label names the whole group.
+            if sequential && group.lowerBound != index && pressedAt[index] == nil { continue }
+            let isCurrent = !sequential || group.contains(current)
+            let isDone = sequential && group.upperBound < current
+            let emphasis: CGFloat = isCurrent ? 1 : (isDone ? 0.22 : 0.4)
             let center = point(marker)
-            let tint = color(for: marker.kind).withAlphaComponent(alphaScale)
+            let tint = color(for: marker.kind).withAlphaComponent(alphaScale * emphasis)
             let pressProgress: CGFloat = {
                 guard let pressed = pressedAt[index] else { return 0 }
                 return CGFloat(min(1, Date().timeIntervalSince(pressed) / 0.35))
@@ -230,8 +293,8 @@ final class MarkerView: NSView {
                 line.stroke()
             }
 
-            let pulse = 4 * sin(phase * .pi * 2)
-            let baseRadius: CGFloat = (marker.kind == "move" ? 14 : 22) + pulse
+            let pulse = isCurrent ? 4 * sin(phase * .pi * 2) : 0
+            let baseRadius: CGFloat = (marker.kind == "move" ? 14 : (isCurrent ? 22 : 16)) + pulse
             let radius = isPressed ? baseRadius * (1 - 0.35 * pressProgress) : baseRadius
             let ring = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
             ring.lineWidth = marker.kind == "move" ? 2 : 4
@@ -265,11 +328,25 @@ final class MarkerView: NSView {
                 cross.stroke()
             }
 
-            if !marker.label.isEmpty {
-                let text = marker.label as NSString
+            // Label: the current group gets its full text, upcoming groups only their numbers,
+            // finished groups nothing.
+            var labelText = marker.label
+            if sequential {
+                let numbers = group.compactMap { markers[$0].number }
+                let range = numbers.count > 1 ? "\(numbers.first!)-\(numbers.last!)" : (numbers.first.map(String.init) ?? "")
+                if isDone {
+                    labelText = ""
+                } else if isCurrent {
+                    labelText = [range, marker.text].filter { !$0.isEmpty }.joined(separator: " ")
+                } else {
+                    labelText = range
+                }
+            }
+            if !labelText.isEmpty {
+                let text = labelText as NSString
                 let attributes: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.boldSystemFont(ofSize: 13),
-                    .foregroundColor: NSColor.white.withAlphaComponent(alphaScale),
+                    .font: NSFont.boldSystemFont(ofSize: isCurrent ? 13 : 11),
+                    .foregroundColor: NSColor.white.withAlphaComponent(alphaScale * (isCurrent ? 1 : 0.85)),
                 ]
                 let size = text.size(withAttributes: attributes)
                 var origin = NSPoint(x: center.x + baseRadius + 12, y: center.y + baseRadius - 2)
@@ -349,9 +426,9 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
         // fire at the moment each click, keystroke, or scroll tick lands.
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown], handler: { [self] event in
             let location = NSEvent.mouseLocation
-            view.press(at: location)
+            let hit = view.press(at: location)
             let played = clickPlayer?.play() ?? "audio-not-ready"
-            log("mouse-down type=\(event.type.rawValue) at=(\(Int(location.x)),\(Int(screen.frame.height - location.y))) sound=\(played)")
+            log("mouse-down type=\(event.type.rawValue) at=(\(Int(location.x)),\(Int(screen.frame.height - location.y))) marker=\(hit.map { String($0 + 1) } ?? "none") next=\(view.current + 1) sound=\(played)")
         }) { monitors.append(monitor) } else { log("global mouse monitor unavailable") }
 
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown], handler: { [self] event in
@@ -371,13 +448,13 @@ final class OverlayDelegate: NSObject, NSApplicationDelegate {
         }) { monitors.append(monitor) } else { log("global key monitor unavailable") }
 
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel], handler: { [self] event in
-            view.press(kind: "scroll")
+            let hit = view.press(kind: "scroll")
             var played = "throttled"
             if Date().timeIntervalSince(lastScrollSound) > 0.12 {
                 lastScrollSound = Date()
                 played = scrollPlayer?.play() ?? "audio-not-ready"
             }
-            log("scroll dy=\(Int(event.scrollingDeltaY)) dx=\(Int(event.scrollingDeltaX)) sound=\(played)")
+            log("scroll dy=\(Int(event.scrollingDeltaY)) dx=\(Int(event.scrollingDeltaX)) marker=\(hit.map { String($0 + 1) } ?? "none") sound=\(played)")
         }) { monitors.append(monitor) } else { log("global scroll monitor unavailable") }
 
         if let readyFile = options.readyFile {

@@ -193,6 +193,12 @@ are set.
 | type, key, hold_key | nothing by default; with the banner on, a line at the top of the screen showing the text or key |
 | computer_batch | one marker (or banner line) per action, numbered in execution order |
 
+In a batch only the next target is drawn at full strength, pulsing, with its label; the ones
+still to come are smaller, dimmer rings showing just their number, and finished ones fade
+out. The overlay advances the highlight as it observes each click or scroll, so with pauses in
+the batch you can watch it move from target to target. Consecutive actions on the same spot,
+such as pressing `2` three times, share one ring labelled `2-4`.
+
 With the banner on, every keystroke flashes its border. If a key sound is set in fast mode it
 is rate-limited to one per 30 ms because computer use types at roughly 100 keystrokes per
 second; in asmr mode every keystroke plays. A scroll gesture plays the scroll sound and pulses
