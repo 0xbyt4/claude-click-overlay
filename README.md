@@ -196,7 +196,7 @@ target is drawn.
 | `reticle` | four corner brackets framing the target, badge on the corner | everyday use, nothing covers the target |
 | `ring` | ring with a crosshair and a label pill, the original look | people who want the crosshair |
 | `sonar` | thin ring with two pulses spreading outward | a softer, livelier marker |
-| `beacon` | translucent disc with the number inside | demos and screen recordings |
+| `beacon` | translucent disc with the number inside | when it must be seen from across the room |
 | `path` | numbered stops joined by a dashed route | showing the plan of a batch |
 | `dot` | a dot, a hairline ring, a tiny number | the quietest option |
 
