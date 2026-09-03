@@ -89,7 +89,7 @@ Environment variables read by the hook:
 | `CLICK_OVERLAY_ASMR_CPS` | `10` | Characters per second in asmr mode |
 | `CLICK_OVERLAY_ASMR_MAX_SECONDS` | `60` | Time budget per `type` call in asmr mode |
 | `CLICK_OVERLAY_SCROLL_SOUND` | `none` | Sound per scroll gesture |
-| `CLICK_OVERLAY_VOLUME` | `0.6` | Sound volume from `0` to `1` |
+| `CLICK_OVERLAY_VOLUME` | `0.75` | Sound volume from `0` to `1` |
 | `CLICK_OVERLAY_BIN` | `overlay/build/click-overlay` | Overlay binary location |
 | `CLICK_OVERLAY_STATE_DIR` | `~/.cache/claude-click-overlay` | Log, pid, and calibration files |
 | `CLICK_OVERLAY_DISABLE` | unset | Set to `1` to turn the hook into a no-op |

@@ -80,7 +80,7 @@ def sound_settings():
         # paces the typing and plays the mechanical keyboard.
         "key_sound": pick("key_sound", "CLICK_OVERLAY_KEY_SOUND", "mechkey" if typing == "asmr" else "none"),
         "scroll_sound": pick("scroll_sound", "CLICK_OVERLAY_SCROLL_SOUND", "none"),
-        "volume": pick("volume", "CLICK_OVERLAY_VOLUME", "0.6"),
+        "volume": pick("volume", "CLICK_OVERLAY_VOLUME", "0.75"),
         "typing": typing,
         "typing_banner": pick("typing_banner", "CLICK_OVERLAY_TYPING_BANNER", "off").lower() == "on",
         "asmr_cps": pick("asmr_cps", "CLICK_OVERLAY_ASMR_CPS", "10"),

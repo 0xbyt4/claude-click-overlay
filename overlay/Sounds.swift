@@ -117,9 +117,18 @@ final class Renderer {
         }
     }
 
+    var peakLevel: Double { max(samples.map { abs($0) }.max() ?? 0, 1e-9) }
+
+    /// Signal energy per second, the measure used to give variants equal loudness.
+    var energy: Double { samples.reduce(0) { $0 + $1 * $1 } / sampleRate }
+
+    func scale(by factor: Double) {
+        for index in 0..<count { samples[index] *= factor }
+    }
+
     /// A float PCM buffer for the audio engine, normalized so the loudest sample sits at `peak`.
     func pcmBuffer(peak: Double = 0.85) -> AVAudioPCMBuffer {
-        let loudest = max(samples.map { abs($0) }.max() ?? 1, 1e-9)
+        let loudest = peakLevel
         let scale = peak / loudest
         let buffer = AVAudioPCMBuffer(pcmFormat: Mixer.monoFormat, frameCapacity: AVAudioFrameCount(count))!
         buffer.frameLength = AVAudioFrameCount(count)
@@ -186,7 +195,28 @@ struct Preset {
     }
 
     func wavData() -> Data { build(0).wavData(peak: peak) }
-    func buffers() -> [AVAudioPCMBuffer] { (0..<variants).map { build($0).pcmBuffer(peak: peak) } }
+
+    /// Every variant at the same loudness: peak normalization alone lets pitch and timing
+    /// differences change the energy by a factor of two, which sounds like missed clicks.
+    func renderers() -> [Renderer] {
+        let renderers = (0..<variants).map { build($0) }
+        guard renderers.count > 1 else { return renderers }
+        // The loudest level every variant can reach without its peak passing 0.95.
+        let ceiling = 0.95
+        let target = renderers.map { renderer -> Double in
+            let headroom = ceiling / renderer.peakLevel
+            return renderer.energy * headroom * headroom
+        }.min() ?? 0
+        for renderer in renderers where renderer.energy > 0 {
+            renderer.scale(by: sqrt(target / renderer.energy))
+        }
+        return renderers
+    }
+
+    func buffers() -> [AVAudioPCMBuffer] {
+        // Normalizing to each renderer's own peak keeps the equal-loudness scaling intact.
+        renderers().map { renderer in renderer.pcmBuffer(peak: renderer.peakLevel) }
+    }
 }
 
 let presets: [Preset] = [

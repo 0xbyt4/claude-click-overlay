@@ -30,7 +30,7 @@ case "sounds":
     print("Choose: click-overlay use [CLICK_SPEC] [--style NAME] [--stroke halo|colour] [--key SPEC] [--scroll SPEC] [--typing fast|asmr] [--banner on|off] [--cps N] [--volume 0..1]")
 case "play", "render", "use":
     var rest = Array(arguments.dropFirst())
-    var volume: Float = 0.6
+    var volume: Float = 0.75
     if let index = rest.firstIndex(of: "--volume") {
         guard index + 1 < rest.count, let parsed = Float(rest[index + 1]) else { fail("--volume needs a number") }
         volume = parsed

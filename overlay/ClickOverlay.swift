@@ -70,7 +70,7 @@ struct ShowOptions {
     var sound = "mouse"
     var keySound = "mechkey"
     var scrollSound = "none"
-    var volume: Float = 0.6
+    var volume: Float = 0.75
     var logPath: String?
     var stateDirectory: String?
     var readyFile: String?
