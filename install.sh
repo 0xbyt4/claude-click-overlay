@@ -37,6 +37,7 @@ if [ "${1:-}" = "--user" ]; then
     python3 - "$HOME/.claude/settings.json" "$HOOK" "$MATCHER_PRE" "$MATCHER_POST" <<'PY'
 import json, os, shutil, sys, time
 path, hook, matcher_pre, matcher_post = sys.argv[1:5]
+os.makedirs(os.path.dirname(path), exist_ok=True)
 settings = {}
 if os.path.exists(path):
     shutil.copy(path, path + ".bak-" + time.strftime("%Y%m%d%H%M%S"))
